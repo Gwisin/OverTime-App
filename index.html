@@ -71,7 +71,7 @@
    설정 - 배포 전 아래 두 값을 반드시 채워주세요
    ========================================================= */
 const CONFIG = {
-  WORKER_URL: "https://YOUR-WORKER-SUBDOMAIN.workers.dev", // Cloudflare Worker 주소
+  WORKER_URL: "https://https://overtime-api.ruleein.workers.dev", // Cloudflare Worker 주소
   GOOGLE_CLIENT_ID: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
 };
 
@@ -782,7 +782,7 @@ async function getSignatureImageUrl(path) {
   // 필요시 Worker에 서명 이미지를 프록시하는 API를 추가하세요.
   return `https://raw.githubusercontent.com/${WORKER_REPO_HINT}/${path}`;
 }
-const WORKER_REPO_HINT = "OWNER/REPO/main"; // README 참고하여 실제 값으로 교체
+const WORKER_REPO_HINT = "Gwisin/OverTime/main"; // README 참고하여 실제 값으로 교체
 
 async function downloadPlan(id, type) {
   try {
