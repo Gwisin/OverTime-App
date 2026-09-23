@@ -197,6 +197,7 @@ function initGoogleButton() {
 
 async function onGoogleCredential(response) {
   state.idToken = response.credential;
+  localStorage.setItem("idToken", state.idToken);
   try {
     const data = await api("/api/auth", { method: "POST", body: { idToken: state.idToken }, auth: false });
     state.authStatus = data.status;
@@ -221,6 +222,7 @@ async function testLogin() {
   const name = document.getElementById("testName").value.trim();
   if (!secret || !email) return alert("시크릿과 이메일을 입력해주세요.");
   state.idToken = `TEST::${secret}::${encodeURIComponent(email)}::${encodeURIComponent(name || email)}`;
+  localStorage.setItem("idToken", state.idToken);
   try {
     const data = await api("/api/auth", { method: "POST", body: { idToken: state.idToken }, auth: false });
     state.authStatus = data.status;
@@ -236,6 +238,7 @@ async function testLogin() {
 }
 
 function logout() {
+  localStorage.removeItem("idToken");
   state.idToken = null;
   state.user = null;
   state.authStatus = null;
@@ -429,9 +432,12 @@ async function loadForm(container, planId) {
       <label>작업일자</label>
       <input id="f_workDate" type="date" value="${plan.workDate}" />
       <label>작업시간</label>
-      <div class="row">
-        <input id="f_workTimeStart" type="time" value="${plan.workTimeStart || ""}" />
-        <input id="f_workTimeEnd" type="time" value="${plan.workTimeEnd || ""}" />
+      <div class="row" style="align-items:center;">
+        <select id="f_startHour">${hourOptions(splitTime(plan.workTimeStart)[0])}</select>
+        <select id="f_startMin">${minuteOptions(splitTime(plan.workTimeStart)[1])}</select>
+        <span class="muted">~</span>
+        <select id="f_endHour">${hourOptions(splitTime(plan.workTimeEnd)[0])}</select>
+        <select id="f_endMin">${minuteOptions(splitTime(plan.workTimeEnd)[1])}</select>
       </div>
       <div class="muted" id="datePreview" style="margin-top:4px;"></div>
       <label>업체명</label>
@@ -476,14 +482,41 @@ async function loadForm(container, planId) {
   const updatePreview = () => {
     document.getElementById("datePreview").textContent = formatDateTimeDisplay(
       document.getElementById("f_workDate").value,
-      document.getElementById("f_workTimeStart").value,
-      document.getElementById("f_workTimeEnd").value
+      combineTime("f_startHour", "f_startMin"),
+      combineTime("f_endHour", "f_endMin")
     );
   };
-  ["f_workDate", "f_workTimeStart", "f_workTimeEnd"].forEach((id) =>
-    document.getElementById(id).addEventListener("input", updatePreview)
+  ["f_workDate", "f_startHour", "f_startMin", "f_endHour", "f_endMin"].forEach((id) =>
+    document.getElementById(id).addEventListener("change", updatePreview)
   );
   updatePreview();
+}
+
+// 시/분 드롭다운 (24시간제, 30분 단위) 헬퍼
+function hourOptions(selected) {
+  let html = `<option value="">시</option>`;
+  for (let h = 0; h < 24; h++) {
+    const v = String(h).padStart(2, "0");
+    html += `<option value="${v}" ${selected === v ? "selected" : ""}>${v}시</option>`;
+  }
+  return html;
+}
+function minuteOptions(selected) {
+  let html = `<option value="">분</option>`;
+  ["00", "30"].forEach((m) => {
+    html += `<option value="${m}" ${selected === m ? "selected" : ""}>${m}분</option>`;
+  });
+  return html;
+}
+function splitTime(t) {
+  if (!t) return ["", ""];
+  const parts = t.split(":");
+  return [parts[0] || "", parts[1] || ""];
+}
+function combineTime(hourId, minId) {
+  const h = document.getElementById(hourId).value;
+  const m = document.getElementById(minId).value;
+  return h && m ? `${h}:${m}` : "";
 }
 
 // "2026.09.29(화) 05:00~07:00" 형태로 표시
@@ -502,8 +535,8 @@ function collectFormData() {
   return {
     workType: document.getElementById("f_workType").value,
     workDate: document.getElementById("f_workDate").value,
-    workTimeStart: document.getElementById("f_workTimeStart").value,
-    workTimeEnd: document.getElementById("f_workTimeEnd").value,
+    workTimeStart: combineTime("f_startHour", "f_startMin"),
+    workTimeEnd: combineTime("f_endHour", "f_endMin"),
     company: document.getElementById("f_company").value,
     workLocation: document.getElementById("f_workLocation").value,
     workforceEquipment: document.getElementById("f_workforceEquipment").value,
@@ -548,6 +581,17 @@ async function loadYesterday() {
     document.getElementById("f_hazards").value = p.hazards || "";
     document.getElementById("f_mitigations").value = p.mitigations || "";
     document.getElementById("f_workerList").value = p.workerList || "";
+    const [sh, sm] = splitTime(p.workTimeStart);
+    const [eh, em] = splitTime(p.workTimeEnd);
+    document.getElementById("f_startHour").value = sh;
+    document.getElementById("f_startMin").value = sm;
+    document.getElementById("f_endHour").value = eh;
+    document.getElementById("f_endMin").value = em;
+    document.getElementById("datePreview").textContent = formatDateTimeDisplay(
+      document.getElementById("f_workDate").value,
+      combineTime("f_startHour", "f_startMin"),
+      combineTime("f_endHour", "f_endMin")
+    );
   } catch (e) {
     alert(e.message);
   }
@@ -571,6 +615,8 @@ async function loadDetail(container, planId) {
     const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
     const canApprove = state.user.org === "hyundai" && plan.status === "pending";
     const canEdit = plan.status !== "approved";
+    const canSubmit = plan.status === "draft";
+    const canDelete = plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai");
 
     container.innerHTML = `
       <div class="card">
@@ -584,9 +630,28 @@ async function loadDetail(container, planId) {
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${plan.rejectReason}</p>` : ""}
         <div class="row" style="margin-top:12px;">
           ${canEdit ? `<button onclick="go('form', '${plan.id}')">수정</button>` : ""}
+          ${canSubmit ? `<button class="primary" onclick="submitPlanFromDetail('${plan.id}')">승인요청</button>` : ""}
           ${canApprove ? `<button class="primary" onclick="approvePlan('${plan.id}')">승인</button>` : ""}
         </div>
         ${canApprove ? `<button class="block" style="color:var(--danger);" onclick="rejectPlan('${plan.id}')">반려</button>` : ""}
+        ${canDelete ? `<button class="block" style="color:var(--danger);" onclick="deletePlan('${plan.id}')">삭제</button>` : ""}
+      </div>
+      <div class="card">
+        <h2>작업 내용</h2>
+        <label>작업장소/내용</label>
+        <div style="white-space:pre-wrap;">${plan.workLocation || "-"}</div>
+        <label>작업 인원/장비</label>
+        <div>${plan.workforceEquipment || "-"}</div>
+        <label>위험요인</label>
+        <div style="white-space:pre-wrap;">${plan.hazards || "-"}</div>
+        <label>저감대책</label>
+        <div style="white-space:pre-wrap;">${plan.mitigations || "-"}</div>
+        <label>작업자 명단</label>
+        <div style="white-space:pre-wrap;">${plan.workerList || "-"}</div>
+        <label>현대건설 담당자</label>
+        <div>${plan.hyundaiManagerName || "-"}</div>
+        <label>협력업체 담당자</label>
+        <div>${plan.vendorManagerName || "-"}</div>
       </div>
       <div class="card">
         <h2>다운로드</h2>
@@ -597,6 +662,26 @@ async function loadDetail(container, planId) {
       </div>`;
   } catch (e) {
     container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+  }
+}
+
+async function submitPlanFromDetail(id) {
+  if (!confirm("승인요청 하시겠습니까?")) return;
+  try {
+    await api(`/api/plans/${encodeURIComponent(id)}/submit`, { method: "POST" });
+    go("detail", id);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function deletePlan(id) {
+  if (!confirm("이 작업계획서를 삭제하시겠습니까? 삭제 후에는 복구할 수 없습니다.")) return;
+  try {
+    await api("/api/plans/" + encodeURIComponent(id), { method: "DELETE" });
+    go("home");
+  } catch (e) {
+    alert(e.message);
   }
 }
 
@@ -883,9 +968,59 @@ async function batchDownload() {
 }
 
 /* =========================================================
-   시작
+   시작 (저장된 로그인 정보로 자동 로그인 시도)
    ========================================================= */
-render();
+function renderBootLoading() {
+  document.getElementById("app").innerHTML = `<main><div class="card center muted" style="margin-top:40px;">로그인 확인 중...</div></main>`;
+}
+
+function attemptSilentGoogleLogin() {
+  if (!window.google || !window.google.accounts) {
+    setTimeout(attemptSilentGoogleLogin, 300);
+    return;
+  }
+  google.accounts.id.initialize({
+    client_id: CONFIG.GOOGLE_CLIENT_ID,
+    callback: onGoogleCredential,
+    auto_select: true,
+  });
+  google.accounts.id.prompt((notification) => {
+    if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+      render(); // 조용한 재로그인 실패 → 일반 로그인 화면으로
+    }
+  });
+}
+
+function bootAuth() {
+  const saved = localStorage.getItem("idToken");
+  if (!saved) {
+    render();
+    return;
+  }
+  renderBootLoading();
+  state.idToken = saved;
+  api("/api/auth", { method: "POST", body: { idToken: saved }, auth: false })
+    .then((data) => {
+      state.authStatus = data.status;
+      if (data.status === "approved") {
+        state.user = data.user;
+        go("home");
+      } else {
+        render();
+      }
+    })
+    .catch(() => {
+      localStorage.removeItem("idToken");
+      state.idToken = null;
+      if (saved.startsWith("TEST::")) {
+        render();
+      } else {
+        attemptSilentGoogleLogin();
+      }
+    });
+}
+
+bootAuth();
 </script>
 </body>
 </html>
