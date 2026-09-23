@@ -337,7 +337,7 @@ async function loadHome(container) {
 /* =========================================================
    4. 작성 폼
    ========================================================= */
-async function renderForm(planId) {
+function renderForm(planId) {
   const div = document.createElement("div");
   div.innerHTML = `<div class="muted center">불러오는 중...</div>`;
   loadForm(div, planId);
@@ -496,7 +496,7 @@ async function loadYesterday() {
 /* =========================================================
    5. 상세 / 결재 / 다운로드
    ========================================================= */
-async function renderDetail(planId) {
+function renderDetail(planId) {
   const div = document.createElement("div");
   div.innerHTML = `<div class="muted center">불러오는 중...</div>`;
   loadDetail(div, planId);
@@ -654,7 +654,7 @@ async function uploadSignature(dataUrl) {
 /* =========================================================
    7. 관리자 - 가입 승인
    ========================================================= */
-async function renderAdmin() {
+function renderAdmin() {
   const div = document.createElement("div");
   div.innerHTML = `<div class="muted center">불러오는 중...</div>`;
   loadAdmin(div);
