@@ -4,68 +4,125 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>보충작업 계획서</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
-    --accent: #185fa5;
-    --bg: #f5f5f3;
+    --accent: #1b64da;
+    --bg: #f5f6f8;
     --card: #ffffff;
-    --border: #ddd;
-    --text: #222;
-    --muted: #777;
-    --danger: #a32d2d;
-    --success: #3b6d11;
-    --warning: #854f0b;
-    --font: Consolas, Menlo, monospace, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR", sans-serif;
+    --line: #eceef2;
+    --border: #dfe3e9;
+    --text: #191f28;
+    --sub: #4e5968;
+    --muted: #6b7684;
+    --danger: #d92d20;
+    --success: #0f7a3d;
+    --warning: #b25e09;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+    --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: var(--font); font-variant-numeric: tabular-nums; background: var(--bg); color: var(--text); }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; font-family: var(--font); font-size: 14px; line-height: 1.5; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; background: var(--bg); color: var(--text); }
   button, input, select, textarea { font-family: inherit; }
-  #app { max-width: 480px; margin: 0 auto; min-height: 100vh; background: var(--bg); padding-bottom: 40px; }
-  header.topbar { display:flex; flex-wrap:nowrap; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; background:var(--card); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10; }
-  header.topbar .title { font-size:14px; font-weight:600; white-space:nowrap; flex-shrink:0; }
-  header.topbar .user { display:flex; align-items:center; gap:8px; min-width:0; }
-  header.topbar .userinfo { display:flex; flex-direction:column; line-height:1.3; font-size:11px; color:var(--muted); min-width:0; text-align:right; }
-  header.topbar .userinfo span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
-  header.topbar button.link { background:none; border:none; padding:4px 2px; color:var(--accent); font-size:11px; cursor:pointer; white-space:nowrap; flex-shrink:0; }
-  main { padding: 16px; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:14px; }
-  h2 { font-size:16px; margin:0 0 12px; }
-  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
-  input, select, textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; font-family:inherit; background:#fff; }
-  textarea { resize: vertical; min-height:56px; }
-  button { cursor:pointer; padding:10px 14px; border-radius:6px; border:1px solid var(--border); background:#fff; font-size:14px; }
-  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button.block { width:100%; margin-top:10px; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  .row { display:flex; gap:8px; }
-  .row > * { flex:1; min-width:0; }
-  .muted { color:var(--muted); font-size:12px; }
-  .center { text-align:center; }
-  .badge { display:inline-block; font-size:11px; padding:2px 9px; border-radius:20px; }
-  .badge.draft { background:#eee; color:#555; }
-  .badge.pending { background:#faeeda; color:var(--warning); }
-  .badge.approved { background:#eaf3de; color:var(--success); }
-  .badge.rejected { background:#fcebeb; color:var(--danger); }
-  .plan-item { border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:8px; cursor:pointer; background:#fff; }
-  .plan-item .top { display:flex; justify-content:space-between; align-items:center; }
-  .plan-item .sub { font-size:12px; color:var(--muted); margin-top:4px; }
-  .signature-canvas { width:100%; height:150px; border:1px dashed #999; border-radius:6px; background:#fff; touch-action:none; }
-  .tabs { display:flex; gap:6px; margin-bottom:10px; }
-  .tabs button { flex:1; font-size:13px; }
-  .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .approval-step { display:flex; justify-content:space-between; font-size:13px; border-bottom:1px solid var(--border); padding:6px 0; }
-  .approval-step:last-child { border-bottom:none; }
-  .error-text { color:var(--danger); font-size:12px; margin-top:4px; }
-  .hidden { display:none !important; }
-  .date-wrap { position:relative; }
-  .date-label { padding:9px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; background:#fff; }
-  .date-wrap input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
-  .fake-field { padding:9px 10px; border:1px dashed var(--border); border-radius:6px; font-size:13px; color:var(--muted); background:#f5f5f3; }
-  #pdf-template { position:absolute; left:-9999px; top:0; width:750px; background:#fff; }
+  #app { min-height: 100vh; padding-bottom: 48px; }
+
+  /* 상단 바 */
+  header.topbar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px max(16px, calc((100% - 760px) / 2 + 16px)); background: var(--card); border-bottom: 1px solid var(--line); }
+  header.topbar .title { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; flex-shrink: 0; }
+  header.topbar .user { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; flex: 1 1 auto; }
+  header.topbar .userinfo { display: flex; flex-direction: column; min-width: 0; padding-right: 10px; border-right: 1px solid var(--line); line-height: 1.35; font-size: 12px; color: var(--muted); text-align: right; }
+  header.topbar .userinfo span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header.topbar .userinfo span:first-child { color: var(--text); font-weight: 600; }
+  button.link { height: auto; padding: 6px 2px; border: none; background: none; color: var(--accent); font-size: 12px; font-weight: 500; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
+
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+
+  /* 카드 */
+  .card { margin-bottom: 12px; padding: 18px 16px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); }
+  h2 { margin: 0 0 12px; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+  h2.section-title { margin: 22px 4px 10px; font-size: 15px; }
+
+  /* 폼 */
+  label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--sub); }
+  input, select, textarea { width: 100%; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); font-size: 16px; }
+  textarea { height: auto; min-height: 76px; padding: 10px 12px; line-height: 1.5; resize: vertical; }
+  input::placeholder, textarea::placeholder { color: #9aa3af; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(27, 100, 218, 0.12); }
+
+  /* 버튼 */
+  button { height: 44px; padding: 0 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; }
+  button:active { background: #f2f4f6; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:active { background: #1553b8; }
+  button.block { width: 100%; margin-top: 12px; }
+  button.cta { height: 46px; margin-top: 0; border-radius: 10px; font-size: 15px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; min-width: 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .center { text-align: center; }
+  .error-text { margin-top: 6px; color: var(--danger); font-size: 13px; }
+  .hidden { display: none !important; }
+
+  /* 상태 배지 */
+  .badge { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge.draft { background: #f2f4f6; color: #4e5968; }
+  .badge.pending { background: #fff4e5; color: var(--warning); }
+  .badge.approved { background: #e8f6ee; color: var(--success); }
+  .badge.rejected { background: #fdecea; color: var(--danger); }
+
+  /* 작업계획서 목록 카드 */
+  .plan-list { display: flex; flex-direction: column; gap: 10px; }
+  .plan-item { padding: 16px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer; }
+  .plan-item:hover { box-shadow: 0 2px 10px rgba(16, 24, 40, 0.08); }
+  .plan-item .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .plan-item .date { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; }
+  .plan-item .time { margin-top: 2px; font-size: 15px; font-weight: 500; color: var(--sub); }
+  .plan-item .time .dot { margin: 0 6px; color: #b0b8c1; }
+  .plan-item .time .wtype { font-weight: 600; color: var(--text); }
+  .plan-item .meta { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .plan-item .meta-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--sub); }
+  .plan-item .meta-row.company { font-size: 14px; font-weight: 500; color: var(--text); }
+  .plan-item .meta-row svg { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; color: #98a2b3; }
+  .plan-item .sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
+  /* 카드 안에 들어간 목록(가입 승인 등)은 박스 없이 구분선으로 */
+  .card .plan-item { padding: 14px 0; background: transparent; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; cursor: default; }
+  .card .plan-item:last-child { padding-bottom: 0; border-bottom: none; }
+  .plan-item .row button { height: 40px; }
+
+  .approval-step { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .approval-step:last-child { border-bottom: none; }
+
+  .signature-canvas { width: 100%; height: 150px; border: 1.5px dashed #c5ccd6; border-radius: 10px; background: #fafbfc; touch-action: none; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; padding: 4px; background: #eef0f3; border-radius: 10px; }
+  .tabs button { flex: 1; height: 36px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; }
+  .tabs button.active { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.1); }
+
+  .date-wrap { position: relative; }
+  .date-label { display: flex; align-items: center; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 16px; }
+  .date-wrap input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .fake-field { display: flex; align-items: center; height: 44px; padding: 0 12px; border: 1px dashed var(--border); border-radius: 8px; background: #f7f8fa; color: var(--muted); font-size: 14px; }
+
+  /* 로그인/안내 카드는 PC에서 폭 제한 */
+  .card.center { max-width: 420px; margin: 24px auto; }
+
+  @media (max-width: 380px) { header.topbar .title { font-size: 15px; } }
+  @media (min-width: 768px) {
+    main { padding: 24px 16px 48px; }
+    .card { padding: 22px 20px; }
+    input, select, textarea, .date-label { font-size: 15px; }
+  }
+
+  #pdf-template { position: absolute; left: -9999px; top: 0; width: 750px; background: #fff; }
 </style>
 </head>
 <body>
@@ -140,7 +197,7 @@ function renderHeader() {
     <div class="title" style="cursor:pointer" onclick="go('home')">보충작업 계획서</div>
     <div class="user">
       <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
-      <button class="link" onclick="go('mypage')">개인페이지</button>
+      <button class="link" onclick="go('mypage')">마이페이지</button>
       <button class="link" onclick="logout()">로그아웃</button>
     </div>`;
   return header;
@@ -344,23 +401,26 @@ async function loadHome(container) {
     const data = await api("/api/plans");
     const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
     container.innerHTML = `
-      <div class="card">
-        <button class="primary block" onclick="go('form')">+ 새 작업계획서 작성</button>
-      </div>
-      ${state.user.org === "hyundai" ? `<div class="card"><button class="block" onclick="go('admin')">가입 승인 관리</button></div>` : ""}
-      <div class="card">
-        <h2>작업계획서 목록</h2>
-        ${data.plans.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : ""}
+      <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
+      ${state.user.org === "hyundai" ? `<button class="block" onclick="go('admin')">가입 승인 관리</button>` : ""}
+      <h2 class="section-title">작업계획서 목록</h2>
+      ${data.plans.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : ""}
+      <div class="plan-list">
         ${data.plans
           .map(
             (p) => `
           <div class="plan-item" onclick="go('detail', '${p.id}')">
             <div class="top">
-              <span>${formatDateTimeDisplay(p.workDate, p.workTimeStart, p.workTimeEnd)} · ${p.workType}</span>
+              <div>
+                <div class="date">${formatDateLabel(p.workDate)}</div>
+                <div class="time">${p.workTimeStart && p.workTimeEnd ? `<span>${p.workTimeStart}~${p.workTimeEnd}</span><span class="dot">·</span>` : ""}<span class="wtype">${p.workType}</span></div>
+              </div>
               <span class="badge ${p.status}">${badgeLabel[p.status] || p.status}</span>
             </div>
-            <div class="sub">${p.company}</div>
-            <div class="sub">협력업체 ${p.vendorManagerName || "-"} · 현대건설 ${p.hyundaiManagerName || "-"}</div>
+            <div class="meta">
+              <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${p.company}</span></div>
+              <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>협력업체 ${p.vendorManagerName || "-"} · 현대건설 ${p.hyundaiManagerName || "-"}</span></div>
+            </div>
           </div>`
           )
           .join("")}
@@ -422,7 +482,7 @@ async function loadForm(container, planId) {
     <div class="card">
       <div class="top" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
         <h2 style="margin:0;">작업계획서 ${planId ? "수정" : "작성"}</h2>
-        <button class="link" style="background:none;border:none;color:var(--accent);font-size:12px;" onclick="loadYesterday()">전날 내용 불러오기</button>
+        <button class="link" style="background:none;border:none;color:var(--accent);font-size:13px;" onclick="loadYesterday()">전날 내용 불러오기</button>
       </div>
       <label>작업구분</label>
       <select id="f_workType">
@@ -969,6 +1029,7 @@ async function renderPlanToCanvas(plan) {
     } catch (e) {}
   }
   await new Promise((r) => setTimeout(r, 50));
+  if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
   const canvas = await html2canvas(container, { scale: 2, useCORS: true });
   container.innerHTML = "";
   return canvas;
