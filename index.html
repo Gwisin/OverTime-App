@@ -19,14 +19,18 @@
     --danger: #a32d2d;
     --success: #3b6d11;
     --warning: #854f0b;
+    --font: Consolas, Menlo, monospace, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR", sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; background: var(--bg); color: var(--text); }
+  body { margin: 0; font-family: var(--font); font-variant-numeric: tabular-nums; background: var(--bg); color: var(--text); }
+  button, input, select, textarea { font-family: inherit; }
   #app { max-width: 480px; margin: 0 auto; min-height: 100vh; background: var(--bg); padding-bottom: 40px; }
-  header.topbar { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; background:var(--card); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10; }
-  header.topbar .title { font-size:16px; font-weight:600; }
-  header.topbar .user { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; }
-  header.topbar button.link { background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer; }
+  header.topbar { display:flex; flex-wrap:nowrap; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; background:var(--card); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10; }
+  header.topbar .title { font-size:14px; font-weight:600; white-space:nowrap; flex-shrink:0; }
+  header.topbar .user { display:flex; align-items:center; gap:8px; min-width:0; }
+  header.topbar .userinfo { display:flex; flex-direction:column; line-height:1.3; font-size:11px; color:var(--muted); min-width:0; text-align:right; }
+  header.topbar .userinfo span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
+  header.topbar button.link { background:none; border:none; padding:4px 2px; color:var(--accent); font-size:11px; cursor:pointer; white-space:nowrap; flex-shrink:0; }
   main { padding: 16px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:14px; }
   h2 { font-size:16px; margin:0 0 12px; }
@@ -38,7 +42,7 @@
   button.block { width:100%; margin-top:10px; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .row { display:flex; gap:8px; }
-  .row > * { flex:1; }
+  .row > * { flex:1; min-width:0; }
   .muted { color:var(--muted); font-size:12px; }
   .center { text-align:center; }
   .badge { display:inline-block; font-size:11px; padding:2px 9px; border-radius:20px; }
@@ -57,6 +61,10 @@
   .approval-step:last-child { border-bottom:none; }
   .error-text { color:var(--danger); font-size:12px; margin-top:4px; }
   .hidden { display:none !important; }
+  .date-wrap { position:relative; }
+  .date-label { padding:9px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; background:#fff; }
+  .date-wrap input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+  .fake-field { padding:9px 10px; border:1px dashed var(--border); border-radius:6px; font-size:13px; color:var(--muted); background:#f5f5f3; }
   #pdf-template { position:absolute; left:-9999px; top:0; width:750px; background:#fff; }
 </style>
 </head>
@@ -131,7 +139,7 @@ function renderHeader() {
   header.innerHTML = `
     <div class="title" style="cursor:pointer" onclick="go('home')">보충작업 계획서</div>
     <div class="user">
-      <span>${state.user.name} (${state.user.company})</span>
+      <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
       <button class="link" onclick="go('mypage')">개인페이지</button>
       <button class="link" onclick="logout()">로그아웃</button>
     </div>`;
@@ -356,14 +364,6 @@ async function loadHome(container) {
           </div>`
           )
           .join("")}
-      </div>
-      <div class="card">
-        <h2>기간별 일괄 다운로드</h2>
-        <div class="row">
-          <input type="date" id="batchFrom" />
-          <input type="date" id="batchTo" />
-        </div>
-        <button class="block" onclick="batchDownload()">ZIP으로 다운로드</button>
       </div>`;
   } catch (e) {
     container.innerHTML = `<div class="card error-text">${e.message}</div>`;
@@ -407,10 +407,9 @@ async function loadForm(container, planId) {
     }
   }
 
-  const [companiesRes, hyundaiRes] = await Promise.all([
-    api("/api/companies", { auth: false }),
-    api("/api/managers?org=hyundai"),
-  ]);
+  const companiesRes = await api("/api/companies", { auth: false });
+  let plansSummary = [];
+  try { plansSummary = (await api("/api/plans")).plans; } catch (e) {}
   let vendorManagers = [];
   if (plan.company) {
     try {
@@ -430,7 +429,10 @@ async function loadForm(container, planId) {
         ${["조출", "점심", "야간", "주말", "기상특보"].map((t) => `<option ${plan.workType === t ? "selected" : ""}>${t}</option>`).join("")}
       </select>
       <label>작업일자</label>
-      <input id="f_workDate" type="date" value="${plan.workDate}" />
+      <div class="date-wrap">
+        <div id="f_workDateLabel" class="date-label"></div>
+        <input id="f_workDate" type="date" value="${plan.workDate}" />
+      </div>
       <label>작업시간</label>
       <div class="row" style="align-items:center;">
         <select id="f_startHour">${hourOptions(splitTime(plan.workTimeStart)[0])}</select>
@@ -439,7 +441,6 @@ async function loadForm(container, planId) {
         <select id="f_endHour">${hourOptions(splitTime(plan.workTimeEnd)[0])}</select>
         <select id="f_endMin">${minuteOptions(splitTime(plan.workTimeEnd)[1])}</select>
       </div>
-      <div class="muted" id="datePreview" style="margin-top:4px;"></div>
       <label>업체명</label>
       <select id="f_company">
         <option value="">선택</option>
@@ -455,16 +456,20 @@ async function loadForm(container, planId) {
       <textarea id="f_mitigations">${plan.mitigations || ""}</textarea>
       <label>작업자 명단</label>
       <textarea id="f_workerList">${plan.workerList || ""}</textarea>
-      <label>현대건설 담당자</label>
-      <select id="f_hyundaiManager">
-        <option value="">선택</option>
-        ${hyundaiRes.managers.map((m) => `<option value="${m.email}" ${plan.hyundaiManagerEmail === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
-      </select>
-      <label>협력업체 담당자</label>
-      <select id="f_vendorManager">
-        <option value="">업체 먼저 선택</option>
-        ${vendorManagers.map((m) => `<option value="${m.email}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
-      </select>
+      <label>상주관리자</label>
+      <div class="row">
+        <div>
+          <div class="muted" style="margin-bottom:4px;">협력업체</div>
+          <select id="f_vendorManager">
+            <option value="">업체 먼저 선택</option>
+            ${vendorManagers.map((m) => `<option value="${m.email}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <div class="muted" style="margin-bottom:4px;">현대건설</div>
+          <div class="fake-field">승인 시 지정</div>
+        </div>
+      </div>
       <div id="formError" class="error-text"></div>
       <div class="row" style="margin-top:12px;">
         <button onclick="savePlanForm('${planId || ""}', false)">저장</button>
@@ -479,17 +484,58 @@ async function loadForm(container, planId) {
       `<option value="">선택</option>` + r.managers.map((m) => `<option value="${m.email}">${m.name}</option>`).join("");
   });
 
-  const updatePreview = () => {
-    document.getElementById("datePreview").textContent = formatDateTimeDisplay(
-      document.getElementById("f_workDate").value,
-      combineTime("f_startHour", "f_startMin"),
-      combineTime("f_endHour", "f_endMin")
-    );
+  // 작업일자 표시: 2026.09.29(화)
+  const dateInput = document.getElementById("f_workDate");
+  const updateDateLabel = () => {
+    document.getElementById("f_workDateLabel").textContent = formatDateLabel(dateInput.value) || "날짜 선택";
   };
-  ["f_workDate", "f_startHour", "f_startMin", "f_endHour", "f_endMin"].forEach((id) =>
-    document.getElementById(id).addEventListener("change", updatePreview)
-  );
-  updatePreview();
+  dateInput.addEventListener("change", updateDateLabel);
+  dateInput.addEventListener("click", () => {
+    try { if (dateInput.showPicker) dateInput.showPicker(); } catch (e) {}
+  });
+  updateDateLabel();
+
+  // 작업구분별 작업시간 자동 입력
+  const applyWorkTypeDefaults = () => {
+    const type = document.getElementById("f_workType").value;
+    if (type === "점심") setTimeSelects("11:30", "13:00");
+    else if (type === "주말") setTimeSelects("07:00", "17:30");
+    else if (type === "조출") {
+      const company = document.getElementById("f_company").value;
+      setTimeSelects(latestJochulStart(plansSummary, company) || "06:00", "07:00");
+    }
+  };
+  document.getElementById("f_workType").addEventListener("change", applyWorkTypeDefaults);
+  document.getElementById("f_company").addEventListener("change", () => {
+    if (document.getElementById("f_workType").value === "조출") applyWorkTypeDefaults();
+  });
+  if (!planId) applyWorkTypeDefaults();
+}
+
+// 시간 드롭다운 값 일괄 설정 (30분 단위로 내림 보정)
+function setTimeSelects(start, end) {
+  const norm = (t) => {
+    if (!t) return ["", ""];
+    const [h, m] = t.split(":");
+    return [h, Number(m) >= 30 ? "30" : "00"];
+  };
+  const [sh, sm] = norm(start);
+  const [eh, em] = norm(end);
+  document.getElementById("f_startHour").value = sh;
+  document.getElementById("f_startMin").value = sm;
+  document.getElementById("f_endHour").value = eh;
+  document.getElementById("f_endMin").value = em;
+}
+// 같은 업체의 가장 최근 조출 작업 시작시간 (목록은 최신순 정렬)
+function latestJochulStart(plans, company) {
+  const found = plans.find((p) => p.workType === "조출" && p.workTimeStart && (!company || p.company === company));
+  return found ? found.workTimeStart : null;
+}
+// 작성화면용 날짜 표시: 2026.09.29(화)
+function formatDateLabel(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  return `${dateStr.replace(/-/g, ".")}(${DAY_NAMES[d.getDay()]})`;
 }
 
 // 시/분 드롭다운 (24시간제, 30분 단위) 헬퍼
@@ -530,7 +576,6 @@ function formatDateTimeDisplay(dateStr, startTime, endTime) {
 }
 
 function collectFormData() {
-  const hyundaiSel = document.getElementById("f_hyundaiManager");
   const vendorSel = document.getElementById("f_vendorManager");
   return {
     workType: document.getElementById("f_workType").value,
@@ -543,8 +588,6 @@ function collectFormData() {
     hazards: document.getElementById("f_hazards").value,
     mitigations: document.getElementById("f_mitigations").value,
     workerList: document.getElementById("f_workerList").value,
-    hyundaiManagerEmail: hyundaiSel.value,
-    hyundaiManagerName: hyundaiSel.options[hyundaiSel.selectedIndex]?.text || "",
     vendorManagerEmail: vendorSel.value,
     vendorManagerName: vendorSel.options[vendorSel.selectedIndex]?.text || "",
   };
@@ -581,17 +624,8 @@ async function loadYesterday() {
     document.getElementById("f_hazards").value = p.hazards || "";
     document.getElementById("f_mitigations").value = p.mitigations || "";
     document.getElementById("f_workerList").value = p.workerList || "";
-    const [sh, sm] = splitTime(p.workTimeStart);
-    const [eh, em] = splitTime(p.workTimeEnd);
-    document.getElementById("f_startHour").value = sh;
-    document.getElementById("f_startMin").value = sm;
-    document.getElementById("f_endHour").value = eh;
-    document.getElementById("f_endMin").value = em;
-    document.getElementById("datePreview").textContent = formatDateTimeDisplay(
-      document.getElementById("f_workDate").value,
-      combineTime("f_startHour", "f_startMin"),
-      combineTime("f_endHour", "f_endMin")
-    );
+    const type = document.getElementById("f_workType").value;
+    if (!["점심", "조출", "주말"].includes(type)) setTimeSelects(p.workTimeStart, p.workTimeEnd);
   } catch (e) {
     alert(e.message);
   }
@@ -617,6 +651,10 @@ async function loadDetail(container, planId) {
     const canEdit = plan.status !== "approved";
     const canSubmit = plan.status === "draft";
     const canDelete = plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai");
+    let hyundaiManagers = [];
+    if (canApprove) {
+      try { hyundaiManagers = (await api("/api/managers?org=hyundai")).managers; } catch (e) {}
+    }
 
     container.innerHTML = `
       <div class="card">
@@ -628,6 +666,11 @@ async function loadDetail(container, planId) {
         <div class="approval-step"><span>작성 · ${plan.writerName || "-"}</span><span>${plan.status === "draft" ? "임시저장" : "완료"}</span></div>
         <div class="approval-step"><span>승인 · ${plan.hyundaiManagerName || "미지정"}</span><span>${plan.approval ? "완료 (" + plan.approval.approverName + ")" : "대기중"}</span></div>
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${plan.rejectReason}</p>` : ""}
+        ${canApprove ? `
+          <label>현대건설 상주관리자</label>
+          <select id="approveManager">
+            ${hyundaiManagers.map((m) => `<option value="${m.email}" ${(plan.hyundaiManagerEmail || state.user.email) === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
+          </select>` : ""}
         <div class="row" style="margin-top:12px;">
           ${canEdit ? `<button onclick="go('form', '${plan.id}')">수정</button>` : ""}
           ${canSubmit ? `<button class="primary" onclick="submitPlanFromDetail('${plan.id}')">승인요청</button>` : ""}
@@ -648,10 +691,11 @@ async function loadDetail(container, planId) {
         <div style="white-space:pre-wrap;">${plan.mitigations || "-"}</div>
         <label>작업자 명단</label>
         <div style="white-space:pre-wrap;">${plan.workerList || "-"}</div>
-        <label>현대건설 담당자</label>
-        <div>${plan.hyundaiManagerName || "-"}</div>
-        <label>협력업체 담당자</label>
-        <div>${plan.vendorManagerName || "-"}</div>
+        <label>상주관리자</label>
+        <div class="row">
+          <div><div class="muted">협력업체</div><div>${plan.vendorManagerName || "-"}</div></div>
+          <div><div class="muted">현대건설</div><div>${plan.hyundaiManagerName || "-"}</div></div>
+        </div>
       </div>
       <div class="card">
         <h2>다운로드</h2>
@@ -688,7 +732,9 @@ async function deletePlan(id) {
 async function approvePlan(id) {
   if (!confirm("이 작업계획서를 승인하시겠습니까?")) return;
   try {
-    await api(`/api/plans/${encodeURIComponent(id)}/approve`, { method: "POST" });
+    const sel = document.getElementById("approveManager");
+    const body = sel ? { hyundaiManagerEmail: sel.value, hyundaiManagerName: sel.options[sel.selectedIndex].text } : {};
+    await api(`/api/plans/${encodeURIComponent(id)}/approve`, { method: "POST", body });
     go("detail", id);
   } catch (e) {
     alert(e.message);
@@ -734,6 +780,14 @@ function renderMyPage() {
       </div>
       <div id="sigMsg" class="muted" style="margin-top:8px;"></div>
       ${state.user.signatureUrl ? `<p class="muted">현재 등록된 서명이 있습니다.</p>` : `<p class="muted">등록된 서명이 없습니다. 승인 기능을 사용하려면 서명을 등록해주세요.</p>`}
+    </div>
+    <div class="card">
+      <h2>기간별 일괄 다운로드</h2>
+      <div class="row">
+        <input type="date" id="batchFrom" />
+        <input type="date" id="batchTo" />
+      </div>
+      <button class="block" onclick="batchDownload()">ZIP으로 다운로드</button>
     </div>`;
   setTimeout(setupSignaturePad, 0);
   return div;
@@ -844,7 +898,7 @@ async function approveUser(email, approve) {
    ========================================================= */
 function planToTemplateHtml(plan) {
   return `
-  <div style="font-family:'Malgun Gothic',sans-serif;border:2px solid #000;padding:0;font-size:13px;color:#000;">
+  <div style="font-family:var(--font);border:2px solid #000;padding:0;font-size:13px;color:#000;">
     <div style="text-align:center;font-weight:bold;font-size:18px;padding:10px;border-bottom:2px solid #000;">
       보충작업(휴일/조출/점심/야간/기상특보) 작업계획서
     </div>
@@ -875,6 +929,10 @@ function planToTemplateHtml(plan) {
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">작업자 명단</td>
         <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${plan.workerList || ""}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">상주관리자</td>
+        <td style="border:1px solid #000;padding:6px;" colspan="3">협력업체: ${plan.vendorManagerName || ""} / 현대건설: ${plan.hyundaiManagerName || ""}</td>
       </tr>
     </table>
     <table style="width:100%;border-collapse:collapse;margin-top:6px;">
