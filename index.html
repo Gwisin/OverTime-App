@@ -79,6 +79,7 @@
   .badge.pending { background: #fff4e5; color: var(--warning); }
   .badge.approved { background: #e8f6ee; color: var(--success); }
   .badge.rejected { background: #fdecea; color: var(--danger); }
+  .badge.suspended { background: #f2f4f6; color: #4e5968; }
 
   /* 작업계획서 목록 카드 */
   .plan-list { display: flex; flex-direction: column; gap: 10px; }
@@ -92,6 +93,8 @@
   .plan-item .meta { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
   .plan-item .meta-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--sub); }
   .plan-item .meta-row.company { font-size: 14px; font-weight: 500; color: var(--text); }
+  .plan-item .meta-row.wrap { flex-wrap: wrap; gap: 4px 14px; }
+  .plan-item .meta-item { display: inline-flex; align-items: flex-start; gap: 6px; }
   .plan-item .meta-row svg { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; color: #98a2b3; }
   .plan-item .sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
   /* 카드 안에 들어간 목록(가입 승인 등)은 박스 없이 구분선으로 */
@@ -99,7 +102,10 @@
   .card .plan-item:last-child { padding-bottom: 0; border-bottom: none; }
   .plan-item .row button { height: 40px; }
 
-  .approval-step { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .approval-step { display: flex; align-items: baseline; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .approval-step .step-label { flex: 0 0 32px; font-weight: 600; }
+  .approval-step .step-name { flex: 1 1 auto; min-width: 0; }
+  .approval-step .step-status { margin-left: auto; text-align: right; white-space: nowrap; color: var(--sub); }
   .approval-step:last-child { border-bottom: none; }
 
   .signature-canvas { width: 100%; height: 150px; border: 1.5px dashed #c5ccd6; border-radius: 10px; background: #fafbfc; touch-action: none; }
@@ -111,6 +117,23 @@
   .date-label { display: flex; align-items: center; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 16px; }
   .date-wrap input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
   .fake-field { display: flex; align-items: center; height: 44px; padding: 0 12px; border: 1px dashed var(--border); border-radius: 8px; background: #f7f8fa; color: var(--muted); font-size: 14px; }
+
+  .sig-preview { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: center; }
+  .sig-preview img { max-width: 100%; max-height: 120px; }
+
+  /* 사용자 관리 */
+  .user-row { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .user-row:first-child { padding-top: 0; }
+  .user-row:last-child { padding-bottom: 0; border-bottom: none; }
+  .user-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .user-name { font-size: 15px; font-weight: 600; }
+  .user-row .sub { margin-top: 2px; font-size: 13px; color: var(--muted); word-break: break-all; }
+  .tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: #eaf2ff; color: var(--accent); font-size: 11px; font-weight: 700; vertical-align: 1px; }
+  .user-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .user-actions button { height: 36px; padding: 0 12px; font-size: 13px; }
+  button.danger { color: var(--danger); }
+  .user-edit { margin-top: 10px; padding: 12px; border-radius: 10px; background: #f7f8fa; }
+  .user-edit label:first-child { margin-top: 0; }
 
   /* 로그인/안내 카드는 PC에서 폭 제한 */
   .card.center { max-width: 420px; margin: 24px auto; }
@@ -190,11 +213,11 @@ function renderHeader() {
   const header = document.createElement("header");
   header.className = "topbar";
   if (!state.user) {
-    header.innerHTML = `<div class="title">보충작업 계획서</div>`;
+    header.innerHTML = `<div class="title">보충작업계획서</div>`;
     return header;
   }
   header.innerHTML = `
-    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업 계획서</div>
+    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업계획서</div>
     <div class="user">
       <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
       <button class="link" onclick="go('mypage')">마이페이지</button>
@@ -208,6 +231,7 @@ function renderRoute() {
     if (state.authStatus === "not_registered") return renderRegister();
     if (state.authStatus === "pending") return renderPendingNotice();
     if (state.authStatus === "rejected") return renderRejectedNotice();
+    if (state.authStatus === "suspended") return renderSuspendedNotice();
     return renderLogin();
   }
   switch (state.route) {
@@ -216,6 +240,7 @@ function renderRoute() {
     case "detail": return renderDetail(state.routePayload);
     case "mypage": return renderMyPage();
     case "admin": return renderAdmin();
+    case "users": return renderUsers();
     default: return renderHome();
   }
 }
@@ -380,6 +405,11 @@ function renderPendingNotice() {
   div.innerHTML = `<div class="card center"><h2>승인 대기중</h2><p class="muted">관리자 승인 후 이용하실 수 있습니다.</p></div>`;
   return div;
 }
+function renderSuspendedNotice() {
+  const div = document.createElement("div");
+  div.innerHTML = `<div class="card center"><h2>이용이 정지된 계정입니다</h2><p class="muted">담당자에게 문의해주세요.</p></div>`;
+  return div;
+}
 function renderRejectedNotice() {
   const div = document.createElement("div");
   div.innerHTML = `<div class="card center"><h2>가입이 반려되었습니다</h2><p class="muted">담당자에게 문의해주세요.</p></div>`;
@@ -402,7 +432,7 @@ async function loadHome(container) {
     const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
     container.innerHTML = `
       <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
-      ${state.user.org === "hyundai" ? `<button class="block" onclick="go('admin')">가입 승인 관리</button>` : ""}
+      ${state.user.org === "hyundai" || state.user.isAdmin ? `<div class="row" style="margin-top:10px;"><button onclick="go('admin')">가입 승인 관리</button>${state.user.isAdmin ? `<button onclick="go('users')">사용자 관리</button>` : ""}</div>` : ""}
       <h2 class="section-title">작업계획서 목록</h2>
       ${data.plans.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : ""}
       <div class="plan-list">
@@ -419,7 +449,11 @@ async function loadHome(container) {
             </div>
             <div class="meta">
               <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${p.company}</span></div>
-              <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>협력업체 ${p.vendorManagerName || "-"} · 현대건설 ${p.hyundaiManagerName || "-"}</span></div>
+              <div class="meta-row wrap">
+                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l3 3"/></svg><span>작성 ${p.writerName || "-"}</span></span>
+                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>승인 ${p.status === "approved" && p.approverName ? p.approverName : "현대건설 검토중"}</span></span>
+              </div>
+              <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 협력업체 ${cleanName(p.vendorManagerName) || "-"} · 현대건설 ${cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중"}</span></div>
             </div>
           </div>`
           )
@@ -723,8 +757,8 @@ async function loadDetail(container, planId) {
           <span class="badge ${plan.status}">${badgeLabel[plan.status] || plan.status}</span>
         </div>
         <p class="muted">${plan.company}</p>
-        <div class="approval-step"><span>작성 · ${plan.writerName || "-"}</span><span>${plan.status === "draft" ? "임시저장" : "완료"}</span></div>
-        <div class="approval-step"><span>승인 · ${plan.hyundaiManagerName || "미지정"}</span><span>${plan.approval ? "완료 (" + plan.approval.approverName + ")" : "대기중"}</span></div>
+        <div class="approval-step"><span class="step-label">작성</span><span class="step-name">${plan.writerName || "-"}</span><span class="step-status">${plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : "")}</span></div>
+        <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${plan.status === "approved" && plan.approval ? plan.approval.approverName : cleanName(plan.hyundaiManagerName) || "미지정"}</span><span class="step-status">${plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중"}</span></div>
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${plan.rejectReason}</p>` : ""}
         ${canApprove ? `
           <label>현대건설 상주관리자</label>
@@ -823,6 +857,7 @@ function renderMyPage() {
     </div>
     <div class="card">
       <h2>내 서명 등록</h2>
+      <div id="sigPreview"></div>
       <div class="tabs">
         <button id="tabDraw" class="active" onclick="switchSigTab('draw')">그려서 등록</button>
         <button id="tabUpload" onclick="switchSigTab('upload')">이미지 업로드</button>
@@ -850,7 +885,25 @@ function renderMyPage() {
       <button class="block" onclick="batchDownload()">ZIP으로 다운로드</button>
     </div>`;
   setTimeout(setupSignaturePad, 0);
+  setTimeout(loadMySignature, 0);
   return div;
+}
+
+async function loadMySignature() {
+  const box = document.getElementById("sigPreview");
+  if (!box) return;
+  if (!state.user.signatureUrl) {
+    box.innerHTML = "";
+    return;
+  }
+  try {
+    const r = await api("/api/signature");
+    box.innerHTML = r.dataUrl
+      ? `<label style="margin-top:0;">현재 등록된 서명</label><div class="sig-preview" style="margin-bottom:12px;"><img src="${r.dataUrl}" alt="등록된 서명" /></div>`
+      : "";
+  } catch (e) {
+    box.innerHTML = `<p class="error-text">${esc(e.message)}</p>`;
+  }
 }
 
 function switchSigTab(tab) {
@@ -905,6 +958,7 @@ async function uploadSignature(dataUrl) {
     await api("/api/signature", { method: "POST", body: { imageBase64: dataUrl } });
     document.getElementById("sigMsg").textContent = "서명이 저장되었습니다.";
     state.user.signatureUrl = "saved";
+    await loadMySignature();
   } catch (e) {
     document.getElementById("sigMsg").textContent = e.message;
   }
@@ -930,8 +984,8 @@ async function loadAdmin(container) {
           .map(
             (u) => `
           <div class="plan-item">
-            <div class="top"><span>${u.name} (${u.company})</span></div>
-            <div class="sub">${u.email} · ${u.phone}</div>
+            <div class="top"><span>${esc(u.name)} (${esc(u.company)})</span></div>
+            <div class="sub">${esc(u.email)} · ${esc(u.phone)}</div>
             <div class="row" style="margin-top:8px;">
               <button class="primary" onclick="approveUser('${u.email}', true)">승인</button>
               <button onclick="approveUser('${u.email}', false)">반려</button>
@@ -948,6 +1002,239 @@ async function approveUser(email, approve) {
   try {
     await api("/api/users/approve", { method: "POST", body: { email, approve } });
     go("admin");
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+/* =========================================================
+   7-2. 관리자(ADMIN) - 사용자 관리
+   ========================================================= */
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+// 예전에 저장된 "선택" 같은 안내 문구는 빈 값으로 취급
+function cleanName(n) {
+  return !n || n === "선택" || n === "업체 먼저 선택" ? "" : n;
+}
+// 2026.09.29, 16:30 (한국시간)
+function formatDoneTime(iso) {
+  if (!iso) return "";
+  const parts = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(iso));
+  const g = (t) => (parts.find((x) => x.type === t) || {}).value || "";
+  return `${g("year")}.${g("month")}.${g("day")}, ${g("hour")}:${g("minute")}`;
+}
+function formatPhoneValue(v) {
+  const d = v.replace(/\D/g, "").slice(0, 11);
+  return d.length > 7 ? d.slice(0, 3) + "-" + d.slice(3, 7) + "-" + d.slice(7) : d.length > 3 ? d.slice(0, 3) + "-" + d.slice(3) : d;
+}
+
+const USER_STATUS_LABEL = { approved: "이용중", pending: "승인대기", rejected: "반려", suspended: "이용정지" };
+const adminUsersState = { users: [], q: "", company: "" };
+
+function renderUsers() {
+  const div = document.createElement("div");
+  if (!state.user.isAdmin) {
+    div.innerHTML = `<div class="card error-text">관리자만 사용할 수 있습니다.</div>`;
+    return div;
+  }
+  div.innerHTML = `<div class="muted center">불러오는 중...</div>`;
+  loadUsersPage(div);
+  return div;
+}
+
+async function loadUsersPage(container) {
+  try {
+    const data = await api("/api/admin/users");
+    adminUsersState.users = data.users;
+    adminUsersState.q = "";
+    adminUsersState.company = "";
+    container.innerHTML = `
+      <div class="card">
+        <h2>사용자 관리</h2>
+        <div class="row">
+          <input id="userSearch" type="text" placeholder="이름, 이메일, 연락처 검색" />
+          <select id="userCompanyFilter"></select>
+        </div>
+        <div id="userCount" class="muted" style="margin-top:8px;"></div>
+      </div>
+      <div id="userListWrap"></div>`;
+    document.getElementById("userSearch").addEventListener("input", (e) => {
+      adminUsersState.q = e.target.value.trim().toLowerCase();
+      renderUserList();
+    });
+    document.getElementById("userCompanyFilter").addEventListener("change", (e) => {
+      adminUsersState.company = e.target.value;
+      renderUserList();
+    });
+    refreshCompanyFilter();
+    renderUserList();
+  } catch (e) {
+    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
+  }
+}
+
+function refreshCompanyFilter() {
+  const sel = document.getElementById("userCompanyFilter");
+  if (!sel) return;
+  const companies = Array.from(new Set(adminUsersState.users.map((u) => u.company).filter(Boolean))).sort();
+  if (adminUsersState.company && !companies.includes(adminUsersState.company)) adminUsersState.company = "";
+  sel.innerHTML =
+    `<option value="">전체 업체</option>` +
+    companies.map((c) => `<option value="${esc(c)}" ${c === adminUsersState.company ? "selected" : ""}>${esc(c)}</option>`).join("");
+}
+
+function renderUserList() {
+  const { users, q, company } = adminUsersState;
+  const rows = users
+    .map((u, i) => ({ u, i }))
+    .filter(({ u }) => (!company || u.company === company) && (!q || [u.name, u.email, u.phone, u.company].some((v) => String(v || "").toLowerCase().includes(q))));
+  rows.sort((a, b) => String(a.u.company).localeCompare(String(b.u.company), "ko") || String(a.u.name).localeCompare(String(b.u.name), "ko"));
+  document.getElementById("userCount").textContent = `${rows.length}명`;
+  document.getElementById("userListWrap").innerHTML =
+    rows.length === 0 ? `<div class="card muted">조건에 맞는 사용자가 없습니다.</div>` : `<div class="card">${rows.map(({ u, i }) => userRowHtml(u, i)).join("")}</div>`;
+}
+
+function userRowHtml(u, i) {
+  const canManage = !u.isAdmin;
+  const isSuspended = u.status === "suspended";
+  const canToggle = canManage && (u.status === "approved" || isSuspended);
+  return `
+    <div class="user-row">
+      <div class="user-head">
+        <div class="user-name">${esc(u.name)}${u.isAdmin ? `<span class="tag">ADMIN</span>` : ""}</div>
+        <span class="badge ${esc(u.status)}">${USER_STATUS_LABEL[u.status] || esc(u.status)}</span>
+      </div>
+      <div class="sub">${esc(u.company)} · ${esc(u.phone || "-")}</div>
+      <div class="sub">${esc(u.email)}</div>
+      <div class="user-actions">
+        <button onclick="startEditUser(${i})">수정</button>
+        <button onclick="showUserSignature(${i})">서명 확인</button>
+        ${canToggle ? `<button onclick="toggleUserStatus(${i})">${isSuspended ? "정지 해제" : "이용 정지"}</button>` : ""}
+        ${canManage ? `<button class="danger" onclick="deleteUser(${i})">삭제</button>` : ""}
+      </div>
+      <div id="uextra-${i}"></div>
+    </div>`;
+}
+
+async function reloadUsersList() {
+  const data = await api("/api/admin/users");
+  adminUsersState.users = data.users;
+  refreshCompanyFilter();
+  renderUserList();
+}
+
+function startEditUser(i) {
+  const u = adminUsersState.users[i];
+  const companies = Array.from(new Set(adminUsersState.users.map((x) => x.company).filter(Boolean))).sort();
+  document.getElementById("uextra-" + i).innerHTML = `
+    <div class="user-edit">
+      <label>이름</label>
+      <input id="ue-name-${i}" type="text" value="${esc(u.name)}" />
+      <label>회사명</label>
+      <input id="ue-company-${i}" type="text" list="ue-companies-${i}" value="${esc(u.company)}" />
+      <datalist id="ue-companies-${i}">${companies.map((c) => `<option value="${esc(c)}"></option>`).join("")}</datalist>
+      <div class="muted" style="margin-top:4px;">회사명을 바꾸면 같은 업체 소속 전원과 기존 작업계획서의 업체명이 함께 바뀝니다.</div>
+      <label>연락처</label>
+      <input id="ue-phone-${i}" type="tel" maxlength="13" value="${esc(u.phone || "")}" />
+      <div id="ue-msg-${i}" class="error-text"></div>
+      <div class="row" style="margin-top:10px;">
+        <button onclick="cancelEditUser(${i})">취소</button>
+        <button class="primary" onclick="saveUserEdit(${i})">저장</button>
+      </div>
+    </div>`;
+  const ph = document.getElementById(`ue-phone-${i}`);
+  ph.addEventListener("input", () => { ph.value = formatPhoneValue(ph.value); });
+}
+function cancelEditUser(i) {
+  document.getElementById("uextra-" + i).innerHTML = "";
+}
+
+async function saveUserEdit(i) {
+  const u = adminUsersState.users[i];
+  const name = document.getElementById(`ue-name-${i}`).value.trim();
+  const company = document.getElementById(`ue-company-${i}`).value.trim();
+  const phone = document.getElementById(`ue-phone-${i}`).value.trim();
+  const msg = document.getElementById(`ue-msg-${i}`);
+  msg.className = "error-text";
+  if (!name || !company) {
+    msg.textContent = "이름과 회사명을 입력해주세요.";
+    return;
+  }
+  const companyChanged = company !== u.company;
+  if (companyChanged) {
+    const sameCount = adminUsersState.users.filter((x) => x.company === u.company).length;
+    if (!confirm(`회사명을 "${u.company}" → "${company}"(으)로 변경합니다.\n같은 업체 소속 ${sameCount}명 전원과 기존 작업계획서의 업체명이 함께 바뀝니다. 진행할까요?`)) return;
+  }
+  try {
+    if (name !== u.name || phone !== (u.phone || "")) {
+      await api("/api/admin/users/update", { method: "POST", body: { email: u.email, name, phone } });
+    }
+    if (companyChanged) {
+      let done = 0;
+      let remaining = 1;
+      while (remaining > 0) {
+        const r = await api("/api/admin/rename-company", { method: "POST", body: { from: u.company, to: company } });
+        done += r.plansUpdated;
+        remaining = r.remaining;
+        if (remaining > 0) {
+          msg.className = "muted";
+          msg.textContent = `작업계획서 업체명 변경 중... (${done}건 완료, ${remaining}건 남음)`;
+        }
+        if (r.plansUpdated === 0) break;
+      }
+      if (state.user.company === u.company) {
+        state.user.company = company;
+        state.user.org = company === "현대건설" ? "hyundai" : "vendor";
+      }
+    }
+    if (u.email === state.user.email) state.user.name = name;
+    await reloadUsersList();
+    const header = document.querySelector("header.topbar");
+    if (header) header.replaceWith(renderHeader());
+  } catch (e) {
+    msg.className = "error-text";
+    msg.textContent = e.message;
+  }
+}
+
+async function showUserSignature(i) {
+  const u = adminUsersState.users[i];
+  const box = document.getElementById("uextra-" + i);
+  if (!u.hasSignature) {
+    box.innerHTML = `<div class="muted" style="margin-top:10px;">등록된 서명이 없습니다.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="muted" style="margin-top:10px;">불러오는 중...</div>`;
+  try {
+    const r = await api("/api/admin/signature?email=" + encodeURIComponent(u.email));
+    box.innerHTML = r.dataUrl
+      ? `<div class="sig-preview" style="margin-top:10px;"><img src="${r.dataUrl}" alt="서명" /></div>`
+      : `<div class="muted" style="margin-top:10px;">서명 파일을 찾을 수 없습니다.</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="error-text">${esc(e.message)}</div>`;
+  }
+}
+
+async function toggleUserStatus(i) {
+  const u = adminUsersState.users[i];
+  const next = u.status === "suspended" ? "approved" : "suspended";
+  const label = next === "suspended" ? "이용 정지" : "정지 해제";
+  if (!confirm(`${u.name}(${u.company}) 님을 ${label} 하시겠습니까?`)) return;
+  try {
+    await api("/api/admin/users/status", { method: "POST", body: { email: u.email, status: next } });
+    await reloadUsersList();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function deleteUser(i) {
+  const u = adminUsersState.users[i];
+  if (!confirm(`${u.name}(${u.company}) 계정을 삭제하시겠습니까?\n등록된 서명도 함께 삭제되며 복구할 수 없습니다.\n(이미 작성된 작업계획서는 그대로 남습니다.)`)) return;
+  try {
+    await api("/api/admin/users/delete", { method: "POST", body: { email: u.email } });
+    await reloadUsersList();
   } catch (e) {
     alert(e.message);
   }
