@@ -4,6 +4,14 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>보충작업 계획서</title>
+<meta name="theme-color" content="#1b64da" />
+<meta name="application-name" content="보충작업 계획서" />
+<meta name="apple-mobile-web-app-title" content="보충작업" />
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
+<link rel="icon" href="assets/favicon.ico" sizes="16x16 32x32 48x48" />
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png" />
+<link rel="manifest" href="manifest.webmanifest" />
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -138,6 +146,28 @@
   /* 로그인/안내 카드는 PC에서 폭 제한 */
   .card.center { max-width: 420px; margin: 24px auto; }
 
+  /* 로그인 화면 (로그인 route에서만 body.is-login 이 붙음) */
+  body.is-login { background-color: #f4f7fb; background-image: radial-gradient(900px 520px at 12% 8%, rgba(27, 100, 218, 0.09), transparent 62%), radial-gradient(800px 480px at 92% 92%, rgba(27, 100, 218, 0.07), transparent 62%), linear-gradient(180deg, #f8fafd 0%, #eef3fa 100%); background-attachment: fixed; }
+  body.is-login #app { min-height: 0; padding-bottom: 0; }
+  body.is-login main { max-width: none; padding: 0; }
+  .login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh; padding: 24px 0; }
+  .login-card { width: calc(100% - 32px); max-width: 420px; padding: 40px 40px 36px; background: var(--card); border-radius: 20px; box-shadow: 0 12px 40px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.05); }
+  .login-icon { display: block; width: 92px; height: 92px; margin: 0 auto 20px; object-fit: contain; }
+  .login-title { margin: 0 0 8px; font-size: 28px; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em; color: var(--text); text-align: center; }
+  .login-subtitle { margin: 0 0 28px; font-size: 15px; line-height: 1.5; color: var(--muted); text-align: center; }
+  #gsi-button-container { display: flex; justify-content: center; width: 100%; min-height: 44px; }
+  .login-help { margin: 14px 0 0; font-size: 14px; line-height: 1.5; color: var(--muted); text-align: center; }
+  .login-dev { margin: 26px 0 0; text-align: center; }
+  .login-dev a { color: var(--accent); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+  #testLoginArea { margin-top: 18px; padding: 16px; background: #f7f8fa; border-radius: 12px; text-align: left; }
+  #testLoginArea label:first-child { margin-top: 0; }
+  @media (max-width: 480px) {
+    .login-card { padding: 30px 20px 32px; }
+    .login-icon { width: 80px; height: 80px; margin-bottom: 16px; }
+    .login-subtitle { font-size: 14px; margin-bottom: 24px; }
+  }
+  @media (max-width: 340px) { .login-title { font-size: 26px; } }
+
   @media (max-width: 380px) { header.topbar .title { font-size: 15px; } }
   @media (min-width: 768px) {
     main { padding: 24px 16px 48px; }
@@ -202,8 +232,11 @@ function go(route, payload) {
 
 function render() {
   const app = document.getElementById("app");
+  // 일반 로그인 화면(가입신청/승인대기/반려/이용정지 화면이 아닐 때)에서는 상단 바를 그리지 않음
+  const isLoginScreen = !state.user && !["not_registered", "pending", "rejected", "suspended"].includes(state.authStatus);
+  document.body.classList.toggle("is-login", isLoginScreen);
   app.innerHTML = "";
-  app.appendChild(renderHeader());
+  if (!isLoginScreen) app.appendChild(renderHeader());
   const main = document.createElement("main");
   main.appendChild(renderRoute());
   app.appendChild(main);
@@ -213,11 +246,11 @@ function renderHeader() {
   const header = document.createElement("header");
   header.className = "topbar";
   if (!state.user) {
-    header.innerHTML = `<div class="title">보충작업계획서</div>`;
+    header.innerHTML = `<div class="title">보충작업 계획서</div>`;
     return header;
   }
   header.innerHTML = `
-    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업계획서</div>
+    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업 계획서</div>
     <div class="user">
       <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
       <button class="link" onclick="go('mypage')">마이페이지</button>
@@ -251,21 +284,23 @@ function renderRoute() {
 function renderLogin() {
   const div = document.createElement("div");
   div.innerHTML = `
-    <div class="card center">
-      <div style="width:56px;height:56px;border-radius:50%;background:#e6f1fb;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;font-size:26px;">🦺</div>
-      <h2>보충작업 계획서</h2>
-      <p class="muted" style="margin-bottom:18px;">현장 작업계획서 작성 및 결재</p>
-      <div id="gsi-button-container"></div>
-      <p class="muted" style="margin-top:16px;">Google 계정으로 로그인 후 이용할 수 있습니다.</p>
-      <p class="muted" style="margin-top:14px;"><a href="#" onclick="toggleTestLogin();return false;" style="color:var(--accent);">테스트 로그인 (개발용)</a></p>
-      <div id="testLoginArea" class="hidden" style="text-align:left;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-        <label>테스트 시크릿</label>
-        <input id="testSecret" type="text" placeholder="Worker에 등록한 TEST_LOGIN_SECRET" />
-        <label>테스트 이메일 (가상 아이디처럼 사용)</label>
-        <input id="testEmail" type="text" placeholder="예: tester1@test.local" />
-        <label>이름</label>
-        <input id="testName" type="text" placeholder="예: 홍길동" />
-        <button class="primary block" onclick="testLogin()">테스트 로그인</button>
+    <div class="login-screen">
+      <div class="login-card">
+        <img class="login-icon" src="assets/app-icon.png" width="92" height="92" alt="보충작업 계획서 앱 아이콘" />
+        <h1 class="login-title">보충작업 계획서</h1>
+        <p class="login-subtitle">현장 보충작업 계획서 작성 및 결재</p>
+        <div id="gsi-button-container"></div>
+        <p class="login-help">Google 계정으로 로그인 후 이용할 수 있습니다.</p>
+        <div class="login-dev"><a href="#" onclick="toggleTestLogin();return false;">테스트 로그인 (개발용)</a></div>
+        <div id="testLoginArea" class="hidden">
+          <label>테스트 시크릿</label>
+          <input id="testSecret" type="password" placeholder="Worker에 등록한 TEST_LOGIN_SECRET" />
+          <label>테스트 이메일 (가상 아이디처럼 사용)</label>
+          <input id="testEmail" type="text" placeholder="예: tester1@test.local" />
+          <label>이름</label>
+          <input id="testName" type="text" placeholder="예: 홍길동" />
+          <button class="primary block" onclick="testLogin()">테스트 로그인</button>
+        </div>
       </div>
     </div>`;
   setTimeout(initGoogleButton, 0);
@@ -281,9 +316,31 @@ function initGoogleButton() {
     client_id: CONFIG.GOOGLE_CLIENT_ID,
     callback: onGoogleCredential,
   });
-  const el = document.getElementById("gsi-button-container");
-  if (el) google.accounts.id.renderButton(el, { theme: "outline", size: "large", width: 260 });
+  renderGoogleButton();
 }
+
+// 로그인 카드의 실제 가용 폭에 맞춰 공식 Google 버튼 폭을 정함 (GIS 허용 200~400px, 여기서는 최대 360px)
+let lastGsiWidth = 0;
+function renderGoogleButton() {
+  const el = document.getElementById("gsi-button-container");
+  if (!el || !window.google || !window.google.accounts) return;
+  const available = Math.floor(el.clientWidth) || 260;
+  const width = Math.max(200, Math.min(available, 360));
+  lastGsiWidth = width;
+  el.innerHTML = "";
+  google.accounts.id.renderButton(el, { theme: "outline", size: "large", width });
+}
+// 화면 회전/창 크기 변경 시 폭이 실제로 달라졌을 때만 버튼을 다시 그림
+let gsiResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(gsiResizeTimer);
+  gsiResizeTimer = setTimeout(() => {
+    const el = document.getElementById("gsi-button-container");
+    if (!el) return;
+    const next = Math.max(200, Math.min(Math.floor(el.clientWidth) || 260, 360));
+    if (next !== lastGsiWidth) renderGoogleButton();
+  }, 200);
+});
 
 async function onGoogleCredential(response) {
   state.idToken = response.credential;
