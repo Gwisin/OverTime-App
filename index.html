@@ -341,9 +341,9 @@ function renderLogin() {
           <label>테스트 시크릿</label>
           <input id="testSecret" type="password" placeholder="Worker에 등록한 TEST_LOGIN_SECRET" />
           <label>테스트 이메일 (가상 아이디처럼 사용)</label>
-          <input id="testEmail" type="text" placeholder="예: tester1@test.local" />
+          <input id="testEmail" type="text" placeholder="tester1@test.local" />
           <label>이름</label>
-          <input id="testName" type="text" placeholder="예: 홍길동" />
+          <input id="testName" type="text" placeholder="김현대" />
           <button class="primary block" onclick="testLogin()">테스트 로그인</button>
         </div>
       </div>
@@ -450,7 +450,7 @@ function renderRegister() {
       <select id="regCompanySelect"><option value="">불러오는 중...</option></select>
       <input id="regCompanyNew" type="text" placeholder="새 업체명 입력" style="display:none;margin-top:6px;" />
       <label>업체 관리자명</label>
-      <input id="regAdminName" type="text" placeholder="예: 홍길동 대리(안전)" />
+      <input id="regAdminName" type="text" placeholder="김현대 대리(안전)" />
       <label>연락처</label>
       <input id="regPhone" type="tel" placeholder="숫자만 입력" maxlength="13" />
       <div id="regError" class="error-text"></div>
@@ -692,7 +692,7 @@ async function loadForm(container, planId) {
       <label>작업장소/내용</label>
       <textarea id="f_workLocation">${plan.workLocation || ""}</textarea>
       <label>작업 인원/장비</label>
-      <input id="f_workforceEquipment" type="text" value="${plan.workforceEquipment || ""}" placeholder="예: 홍길동 등 5명(관리자 1명, 유도원 3명, 300LC 1대)" />
+      <input id="f_workforceEquipment" type="text" value="${plan.workforceEquipment || ""}" placeholder="김현대 등 5명(관리자 1명, 유도원 3명, 300LC 1대)" />
       <label>위험요인</label>
       <textarea id="f_hazards">${plan.hazards || ""}</textarea>
       <label>저감대책</label>
