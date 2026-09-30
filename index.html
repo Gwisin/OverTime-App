@@ -1,4 +1,13 @@
 <!DOCTYPE html>
+<!--
+  보충작업 계획서 · index.html
+  Version: v1.2.0
+   - 뒤로가기(브라우저/휴대폰 뒤로 버튼)가 직전 화면으로 이동
+   - 조회 범위 문구 정리("전체" / "당사"), 안내 문구 삭제
+   - 작성중·검토중 삭제 (현대건설: 둘 다, 작성자: 작성중만)
+   - '작업자 명단' 항목 삭제 (작성 폼·상세·PDF)
+   - 작업계획서 목록 10개씩 보기 + 더보기
+-->
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
@@ -201,6 +210,8 @@ const state = {
   authStatus: null, // not_registered | pending | rejected | approved
   user: null, // {email, name, company, org, signatureUrl}
   companies: [],
+  homePlans: [], // 홈 목록(정렬 완료) — '더보기'에서 재사용
+  planVisibleCount: 10, // 홈 목록에 보여줄 개수 (더보기 누를 때마다 +10, 조회 범위를 바꾸면 10으로 초기화)
   planViewFilter: "", // "" = 역할별 기본값(협력업체는 내 업체, 현대건설/ADMIN은 전체), "__all__" = 전체, 그 외 = 특정 업체명
   route: "login",
   currentPlan: null,
@@ -225,11 +236,44 @@ async function api(path, { method = "GET", body, auth = true } = {}) {
 /* =========================================================
    라우팅 / 렌더
    ========================================================= */
-function go(route, payload) {
+// 화면 이동. 브라우저 히스토리에 화면 단위로 기록해서 '뒤로가기'가 직전 화면으로 가도록 함.
+//  - 기본: 새 기록을 쌓음(push)
+//  - 같은 화면을 다시 그리는 경우(승인/반려 후 새로고침 등), 로그인 직후 첫 이동: 기록을 덮어씀(replace)
+//  - opts.replace: 저장/삭제 후 이동. 이동할 화면이 바로 직전 화면이면 뒤로 돌아가고, 아니면 현재 기록을 덮어씀
+function navSame(a, b) {
+  return !!a && !!b && a.route === b.route && JSON.stringify(a.payload === undefined ? null : a.payload) === JSON.stringify(b.payload === undefined ? null : b.payload);
+}
+function go(route, payload, opts) {
+  const entry = { route, payload };
+  const cur = history.state && history.state.route ? history.state : null;
+  const fromLogin = state.route === "login";
   state.route = route;
   state.routePayload = payload;
+  if (fromLogin || route === "login" || !cur) {
+    history.replaceState({ route, payload }, "");
+  } else if (opts && opts.replace && cur.prev && navSame(cur.prev, entry)) {
+    history.back(); // popstate 핸들러가 직전 화면을 다시 그림
+    return;
+  } else if ((opts && opts.replace) || navSame(cur, entry)) {
+    history.replaceState({ route, payload, prev: cur.prev }, "");
+  } else {
+    history.pushState({ route, payload, prev: { route: cur.route, payload: cur.payload } }, "");
+  }
   render();
 }
+window.addEventListener("popstate", (e) => {
+  const s = e.state;
+  if (state.user) {
+    if (s && s.route && s.route !== "login") {
+      state.route = s.route;
+      state.routePayload = s.payload;
+    } else {
+      state.route = "home";
+      state.routePayload = undefined;
+    }
+  }
+  render();
+});
 
 function render() {
   const app = document.getElementById("app");
@@ -494,28 +538,27 @@ function planViewFilterOptionsHtml(companies) {
   const isPlainVendor = state.user.org === "vendor" && !state.user.isAdmin;
   const sel = (v) => (state.planViewFilter === v ? "selected" : "");
   let html = isPlainVendor
-    ? `<option value="" ${sel("")}>내 업체 (${state.user.company}) · 기본</option><option value="__all__" ${sel("__all__")}>전체 업체 조회</option>`
-    : `<option value="" ${sel("")}>전체 업체 · 기본</option>`;
+    ? `<option value="" ${sel("")}>당사</option><option value="__all__" ${sel("__all__")}>전체 업체 조회</option>`
+    : `<option value="" ${sel("")}>전체</option>`;
   html += `<option disabled>업체별로 보기 ──────</option>`;
   html += companies.map((c) => `<option value="${c}" ${sel(c)}>${c}</option>`).join("");
   return html;
 }
 
-async function loadHome(container) {
-  try {
-    const [data, companiesRes] = await Promise.all([api("/api/plans" + planListQueryString()), api("/api/companies", { auth: false })]);
-    const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
-    container.innerHTML = `
-      <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
-      ${state.user.org === "hyundai" || state.user.isAdmin ? `<div class="row" style="margin-top:10px;"><button onclick="go('admin')">가입 승인 관리</button>${state.user.isAdmin ? `<button onclick="go('users')">사용자 관리</button>` : ""}</div>` : ""}
-      <label style="margin-top:18px;">조회 범위 <span class="muted" style="font-weight:400;">(다른 업체 작성 사례 참고용)</span></label>
-      <select id="planViewFilter">${planViewFilterOptionsHtml(companiesRes.companies)}</select>
-      <h2 class="section-title">작업계획서 목록</h2>
-      ${data.plans.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : ""}
-      <div class="plan-list">
-        ${data.plans
-          .map(
-            (p) => `
+// 홈 목록: 작업일자 최신순(같은 날짜면 작업 시작시간이 늦은 순) → 10개씩 보여주고 '더보기'로 10개씩 추가
+const PLAN_PAGE_SIZE = 10;
+const PLAN_BADGE_LABEL = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
+function sortPlansForList(plans) {
+  return [...plans].sort(
+    (a, b) =>
+      String(b.workDate || "").localeCompare(String(a.workDate || "")) ||
+      String(b.workTimeStart || "").localeCompare(String(a.workTimeStart || "")) ||
+      String(b.id || "").localeCompare(String(a.id || ""))
+  );
+}
+function planCardHtml(p) {
+  const badgeLabel = PLAN_BADGE_LABEL;
+  return `
           <div class="plan-item" onclick="go('detail', '${p.id}')">
             <div class="top">
               <div>
@@ -532,12 +575,38 @@ async function loadHome(container) {
               </div>
               <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 협력업체 ${cleanName(p.vendorManagerName) || "-"} · 현대건설 ${cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중"}</span></div>
             </div>
-          </div>`
-          )
-          .join("")}
-      </div>`;
+          </div>`;
+}
+function renderPlanListSection() {
+  const wrap = document.getElementById("planListWrap");
+  if (!wrap) return;
+  const list = state.homePlans || [];
+  const shown = list.slice(0, state.planVisibleCount);
+  wrap.innerHTML =
+    (list.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : "") +
+    `<div class="plan-list">${shown.map(planCardHtml).join("")}</div>` +
+    (list.length > shown.length ? `<button class="block" onclick="showMorePlans()">더보기 <span class="muted">(${shown.length}/${list.length})</span></button>` : "");
+}
+function showMorePlans() {
+  state.planVisibleCount += PLAN_PAGE_SIZE;
+  renderPlanListSection();
+}
+
+async function loadHome(container) {
+  try {
+    const [data, companiesRes] = await Promise.all([api("/api/plans" + planListQueryString()), api("/api/companies", { auth: false })]);
+    container.innerHTML = `
+      <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
+      ${state.user.org === "hyundai" || state.user.isAdmin ? `<div class="row" style="margin-top:10px;"><button onclick="go('admin')">가입 승인 관리</button>${state.user.isAdmin ? `<button onclick="go('users')">사용자 관리</button>` : ""}</div>` : ""}
+      <label style="margin-top:18px;">조회 범위</label>
+      <select id="planViewFilter">${planViewFilterOptionsHtml(companiesRes.companies)}</select>
+      <h2 class="section-title">작업계획서 목록</h2>
+      <div id="planListWrap"></div>`;
+    state.homePlans = sortPlansForList(data.plans);
+    renderPlanListSection();
     document.getElementById("planViewFilter").addEventListener("change", (e) => {
       state.planViewFilter = e.target.value;
+      state.planVisibleCount = PLAN_PAGE_SIZE;
       loadHome(container);
     });
   } catch (e) {
@@ -564,7 +633,6 @@ async function loadForm(container, planId) {
     workforceEquipment: "",
     hazards: "",
     mitigations: "",
-    workerList: "",
     workTimeStart: "",
     workTimeEnd: "",
     hyundaiManagerEmail: "",
@@ -629,8 +697,6 @@ async function loadForm(container, planId) {
       <textarea id="f_hazards">${plan.hazards || ""}</textarea>
       <label>저감대책</label>
       <textarea id="f_mitigations">${plan.mitigations || ""}</textarea>
-      <label>작업자 명단</label>
-      <textarea id="f_workerList">${plan.workerList || ""}</textarea>
       <label>상주관리자</label>
       <div class="row">
         <div>
@@ -762,7 +828,6 @@ function collectFormData() {
     workforceEquipment: document.getElementById("f_workforceEquipment").value,
     hazards: document.getElementById("f_hazards").value,
     mitigations: document.getElementById("f_mitigations").value,
-    workerList: document.getElementById("f_workerList").value,
     vendorManagerEmail: vendorSel.value,
     vendorManagerName: vendorSel.options[vendorSel.selectedIndex]?.text || "",
   };
@@ -781,7 +846,7 @@ async function savePlanForm(planId, submitAfter) {
     if (submitAfter) {
       await api(`/api/plans/${encodeURIComponent(res.id)}/submit`, { method: "POST" });
     }
-    go("detail", res.id);
+    go("detail", res.id, { replace: true });
   } catch (e) {
     errEl.textContent = e.message;
   }
@@ -798,7 +863,6 @@ async function loadYesterday() {
     document.getElementById("f_workforceEquipment").value = p.workforceEquipment || "";
     document.getElementById("f_hazards").value = p.hazards || "";
     document.getElementById("f_mitigations").value = p.mitigations || "";
-    document.getElementById("f_workerList").value = p.workerList || "";
     const type = document.getElementById("f_workType").value;
     if (!["점심", "조출", "주말"].includes(type)) setTimeSelects(p.workTimeStart, p.workTimeEnd);
   } catch (e) {
@@ -825,7 +889,9 @@ async function loadDetail(container, planId) {
     const canApprove = state.user.org === "hyundai" && plan.status === "pending";
     const canEdit = plan.status !== "approved";
     const canSubmit = plan.status === "draft";
-    const canDelete = plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai");
+    const canDelete =
+      (plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai")) ||
+      (plan.status === "pending" && state.user.org === "hyundai");
     let hyundaiManagers = [];
     if (canApprove) {
       try { hyundaiManagers = (await api("/api/managers?org=hyundai")).managers; } catch (e) {}
@@ -864,8 +930,6 @@ async function loadDetail(container, planId) {
         <div style="white-space:pre-wrap;">${plan.hazards || "-"}</div>
         <label>저감대책</label>
         <div style="white-space:pre-wrap;">${plan.mitigations || "-"}</div>
-        <label>작업자 명단</label>
-        <div style="white-space:pre-wrap;">${plan.workerList || "-"}</div>
         <label>상주관리자</label>
         <div class="row">
           <div><div class="muted">협력업체</div><div>${plan.vendorManagerName || "-"}</div></div>
@@ -898,7 +962,7 @@ async function deletePlan(id) {
   if (!confirm("이 작업계획서를 삭제하시겠습니까? 삭제 후에는 복구할 수 없습니다.")) return;
   try {
     await api("/api/plans/" + encodeURIComponent(id), { method: "DELETE" });
-    go("home");
+    go("home", undefined, { replace: true });
   } catch (e) {
     alert(e.message);
   }
@@ -1353,10 +1417,6 @@ function planToTemplateHtml(plan) {
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">저감대책</td>
         <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${plan.mitigations || ""}</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">작업자 명단</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${plan.workerList || ""}</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">상주관리자</td>
