@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  보충작업 계획서 · index.html
+  보충작업계획서 · index.html
   Version: v1.2.0
    - 뒤로가기(브라우저/휴대폰 뒤로 버튼)가 직전 화면으로 이동
    - 조회 범위 문구 정리("전체" / "당사"), 안내 문구 삭제
@@ -12,9 +12,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>보충작업 계획서</title>
+<title>보충작업계획서</title>
 <meta name="theme-color" content="#1b64da" />
-<meta name="application-name" content="보충작업 계획서" />
+<meta name="application-name" content="보충작업계획서" />
 <meta name="apple-mobile-web-app-title" content="보충작업" />
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
@@ -291,11 +291,11 @@ function renderHeader() {
   const header = document.createElement("header");
   header.className = "topbar";
   if (!state.user) {
-    header.innerHTML = `<div class="title">보충작업 계획서</div>`;
+    header.innerHTML = `<div class="title">보충작업계획서</div>`;
     return header;
   }
   header.innerHTML = `
-    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업 계획서</div>
+    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업계획서</div>
     <div class="user">
       <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
       <button class="link" onclick="go('mypage')">마이페이지</button>
@@ -332,8 +332,8 @@ function renderLogin() {
     <div class="login-screen">
       <div class="login-card">
         <img class="login-icon" src="assets/app-icon.png" width="92" height="92" alt="보충작업 계획서 앱 아이콘" />
-        <h1 class="login-title">보충작업 계획서</h1>
-        <p class="login-subtitle">현장 보충작업 계획서 작성 및 결재</p>
+        <h1 class="login-title">보충작업계획서</h1>
+        <p class="login-subtitle">보충작업 계획서 작성 및 결재</p>
         <div id="gsi-button-container"></div>
         <p class="login-help">Google 계정으로 로그인 후 이용할 수 있습니다.</p>
         <div class="login-dev"><a href="#" onclick="toggleTestLogin();return false;">테스트 로그인 (개발용)</a></div>
