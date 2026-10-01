@@ -1,7 +1,12 @@
 <!DOCTYPE html>
 <!--
   보충작업계획서 · index.html
-  Version: v1.2.0
+  Version: v1.3.0
+   - 사용자 3단계(협력업체 / 현대건설(주) / 현대건설(주)+ADMIN) 반영
+     · 가입 드롭다운의 현대건설 항목을 "현대건설(주)" 하나로 정리 ("현대건설", "(주)현대건설" 등 비슷한 이름은 목록에서 제외)
+     · 협력업체는 작성 폼에서 자기 업체만 선택, 다른 업체 건 상세에서는 수정·승인요청 버튼 숨김
+     · 마이페이지에 단계 표시(협력업체 / 현대건설 / 현대건설 · ADMIN)
+   (이전) v1.2.0
    - 뒤로가기(브라우저/휴대폰 뒤로 버튼)가 직전 화면으로 이동
    - 조회 범위 문구 정리("전체" / "당사"), 안내 문구 삭제
    - 작성중·검토중 삭제 (현대건설: 둘 다, 작성자: 작성중만)
@@ -462,8 +467,8 @@ function renderRegister() {
       const sel = document.getElementById("regCompanySelect");
       sel.innerHTML =
         `<option value="">업체명 선택</option>` +
-        data.companies.map((c) => `<option>${c}</option>`).join("") +
-        `<option>현대건설</option>` +
+        data.companies.filter((c) => !isHyundaiCompanyName(c)).map((c) => `<option>${c}</option>`).join("") +
+        `<option>현대건설(주)</option>` +
         `<option value="__new__">+ 새 업체 직접 입력</option>`;
       sel.addEventListener("change", () => {
         document.getElementById("regCompanyNew").style.display = sel.value === "__new__" ? "block" : "none";
@@ -651,6 +656,8 @@ async function loadForm(container, planId) {
   }
 
   const companiesRes = await api("/api/companies", { auth: false });
+  // 협력업체는 자기 업체 명의로만 작성할 수 있으므로 업체 선택지를 자기 업체로 제한 (현대건설 단계는 전체)
+  const formCompanies = state.user.org === "vendor" ? [state.user.company] : companiesRes.companies;
   let plansSummary = [];
   try { plansSummary = (await api("/api/plans")).plans; } catch (e) {}
   let vendorManagers = [];
@@ -687,7 +694,7 @@ async function loadForm(container, planId) {
       <label>업체명</label>
       <select id="f_company">
         <option value="">선택</option>
-        ${companiesRes.companies.map((c) => `<option ${plan.company === c ? "selected" : ""}>${c}</option>`).join("")}
+        ${formCompanies.map((c) => `<option ${plan.company === c ? "selected" : ""}>${c}</option>`).join("")}
       </select>
       <label>작업장소/내용</label>
       <textarea id="f_workLocation">${plan.workLocation || ""}</textarea>
@@ -887,8 +894,9 @@ async function loadDetail(container, planId) {
     state.currentPlan = plan;
     const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
     const canApprove = state.user.org === "hyundai" && plan.status === "pending";
-    const canEdit = plan.status !== "approved";
-    const canSubmit = plan.status === "draft";
+    const canManage = state.user.org === "hyundai" || plan.company === state.user.company; // 협력업체는 같은 업체 건만
+    const canEdit = plan.status !== "approved" && canManage;
+    const canSubmit = plan.status === "draft" && canManage;
     const canDelete =
       (plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai")) ||
       (plan.status === "pending" && state.user.org === "hyundai");
@@ -998,7 +1006,7 @@ function renderMyPage() {
   div.innerHTML = `
     <div class="card">
       <h2>내 정보</h2>
-      <p class="muted">${state.user.name} · ${state.user.company} (${state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
+      <p class="muted">${state.user.name} · ${state.user.company} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
     </div>
     <div class="card">
       <h2>내 서명 등록</h2>
@@ -1157,6 +1165,10 @@ async function approveUser(email, approve) {
    ========================================================= */
 function esc(v) {
   return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+// "현대건설"과 같은 회사를 가리키는 이름인지 (현대건설 / 현대건설(주) / (주)현대건설 ...) — 가입 드롭다운에서 협력업체 목록과 섞이지 않게 거르는 용도
+function isHyundaiCompanyName(n) {
+  return String(n || "").replace(/\s+/g, "").replace(/[(（]주[)）]/g, "").replace(/㈜/g, "").replace(/주식회사/g, "") === "현대건설";
 }
 // 예전에 저장된 "선택" 같은 안내 문구는 빈 값으로 취급
 function cleanName(n) {
@@ -1330,7 +1342,7 @@ async function saveUserEdit(i) {
       }
       if (state.user.company === u.company) {
         state.user.company = company;
-        state.user.org = company === "현대건설" ? "hyundai" : "vendor";
+        state.user.org = state.user.isAdmin || company === "현대건설(주)" ? "hyundai" : "vendor";
       }
     }
     if (u.email === state.user.email) state.user.name = name;
