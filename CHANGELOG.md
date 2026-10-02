@@ -4,11 +4,21 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ## [Unreleased]
 
+### Changed
+
+- Remove duplicated version-history headers from `index.html` and `worker/worker.js`; Git history and this changelog are the version record.
+
 ### Security
 
 - Escape server-provided values in the home plan list, company filter, and plan detail view.
+- Escape existing plan, company, and manager values rendered in the plan edit form.
+- Escape user identity and company values rendered in the header, registration, my-page, and pending-user approval views.
 - Replace plan-ID inline event handlers in those views with programmatically bound listeners.
+- Replace plan-ID inline save handlers in the edit form with programmatically bound listeners.
+- Replace pending-user email inline approval handlers with index-based bound listeners.
+- Replace ADMIN user-row and edit-form inline handlers with index-based bound listeners.
 - Restrict plan status CSS classes to known status values.
+- Restrict ADMIN user status CSS classes to known status values.
 
 ## [1.4.1] - 2026-10-02
 

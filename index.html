@@ -1,18 +1,4 @@
 <!DOCTYPE html>
-<!--
-  보충작업계획서 · index.html
-  Version: v1.3.0
-   - 사용자 3단계(협력업체 / 현대건설(주) / 현대건설(주)+ADMIN) 반영
-     · 가입 드롭다운의 현대건설 항목을 "현대건설(주)" 하나로 정리 ("현대건설", "(주)현대건설" 등 비슷한 이름은 목록에서 제외)
-     · 협력업체는 작성 폼에서 자기 업체만 선택, 다른 업체 건 상세에서는 수정·승인요청 버튼 숨김
-     · 마이페이지에 단계 표시(협력업체 / 현대건설 / 현대건설 · ADMIN)
-   (이전) v1.2.0
-   - 뒤로가기(브라우저/휴대폰 뒤로 버튼)가 직전 화면으로 이동
-   - 조회 범위 문구 정리("전체" / "당사"), 안내 문구 삭제
-   - 작성중·검토중 삭제 (현대건설: 둘 다, 작성자: 작성중만)
-   - '작업자 명단' 항목 삭제 (작성 폼·상세·PDF)
-   - 작업계획서 목록 10개씩 보기 + 더보기
--->
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
@@ -1220,6 +1206,9 @@ function formatPhoneValue(v) {
 }
 
 const USER_STATUS_LABEL = { approved: "이용중", pending: "승인대기", rejected: "반려", suspended: "이용정지" };
+function userStatusClass(status) {
+  return Object.prototype.hasOwnProperty.call(USER_STATUS_LABEL, status) ? status : "";
+}
 const adminUsersState = { users: [], q: "", company: "" };
 
 function renderUsers() {
@@ -1283,25 +1272,35 @@ function renderUserList() {
   document.getElementById("userCount").textContent = `${rows.length}명`;
   document.getElementById("userListWrap").innerHTML =
     rows.length === 0 ? `<div class="card muted">조건에 맞는 사용자가 없습니다.</div>` : `<div class="card">${rows.map(({ u, i }) => userRowHtml(u, i)).join("")}</div>`;
+  document.querySelectorAll("#userListWrap [data-user-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const i = Number(button.dataset.userIndex);
+      if (!Number.isInteger(i) || !adminUsersState.users[i]) return;
+      const actions = { edit: startEditUser, signature: showUserSignature, toggle: toggleUserStatus, delete: deleteUser };
+      const action = actions[button.dataset.userAction];
+      if (action) action(i);
+    });
+  });
 }
 
 function userRowHtml(u, i) {
   const canManage = !u.isAdmin;
   const isSuspended = u.status === "suspended";
   const canToggle = canManage && (u.status === "approved" || isSuspended);
+  const statusClass = userStatusClass(u.status);
   return `
     <div class="user-row">
       <div class="user-head">
         <div class="user-name">${esc(u.name)}${u.isAdmin ? `<span class="tag">ADMIN</span>` : ""}</div>
-        <span class="badge ${esc(u.status)}">${USER_STATUS_LABEL[u.status] || esc(u.status)}</span>
+        <span class="badge ${statusClass}">${USER_STATUS_LABEL[u.status] || esc(u.status)}</span>
       </div>
       <div class="sub">${esc(u.company)} · ${esc(u.phone || "-")}</div>
       <div class="sub">${esc(u.email)}</div>
       <div class="user-actions">
-        <button onclick="startEditUser(${i})">수정</button>
-        <button onclick="showUserSignature(${i})">서명 확인</button>
-        ${canToggle ? `<button onclick="toggleUserStatus(${i})">${isSuspended ? "정지 해제" : "이용 정지"}</button>` : ""}
-        ${canManage ? `<button class="danger" onclick="deleteUser(${i})">삭제</button>` : ""}
+        <button data-user-action="edit" data-user-index="${i}">수정</button>
+        <button data-user-action="signature" data-user-index="${i}">서명 확인</button>
+        ${canToggle ? `<button data-user-action="toggle" data-user-index="${i}">${isSuspended ? "정지 해제" : "이용 정지"}</button>` : ""}
+        ${canManage ? `<button class="danger" data-user-action="delete" data-user-index="${i}">삭제</button>` : ""}
       </div>
       <div id="uextra-${i}"></div>
     </div>`;
@@ -1329,12 +1328,15 @@ function startEditUser(i) {
       <input id="ue-phone-${i}" type="tel" maxlength="13" value="${esc(u.phone || "")}" />
       <div id="ue-msg-${i}" class="error-text"></div>
       <div class="row" style="margin-top:10px;">
-        <button onclick="cancelEditUser(${i})">취소</button>
-        <button class="primary" onclick="saveUserEdit(${i})">저장</button>
+        <button class="user-edit-cancel">취소</button>
+        <button class="primary user-edit-save">저장</button>
       </div>
     </div>`;
   const ph = document.getElementById(`ue-phone-${i}`);
   ph.addEventListener("input", () => { ph.value = formatPhoneValue(ph.value); });
+  const editBox = document.getElementById("uextra-" + i);
+  editBox.querySelector(".user-edit-cancel").addEventListener("click", () => cancelEditUser(i));
+  editBox.querySelector(".user-edit-save").addEventListener("click", () => saveUserEdit(i));
 }
 function cancelEditUser(i) {
   document.getElementById("uextra-" + i).innerHTML = "";

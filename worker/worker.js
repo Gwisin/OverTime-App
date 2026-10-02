@@ -1,13 +1,3 @@
-/**
- * OverTime Cloudflare Worker
- * Version: 1.4.1 (2026-10-02)
- *
- * Source of truth: worker/worker.js
- * Release history: CHANGELOG.md
- * Manual deployment record and checklist: DEPLOYMENTS.md
- * Runtime data contract and environment variables: worker/README.md
- */
-
 function corsHeaders(env) {
   return {
     "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
