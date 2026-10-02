@@ -302,7 +302,7 @@ function renderHeader() {
   header.innerHTML = `
     <div class="title" style="cursor:pointer" onclick="go('home')">보충작업계획서</div>
     <div class="user">
-      <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
+      <div class="userinfo"><span>${esc(state.user.name)}</span><span>${esc(state.user.company)}</span></div>
       <button class="link" onclick="go('mypage')">마이페이지</button>
       <button class="link" onclick="logout()">로그아웃</button>
     </div>`;
@@ -445,6 +445,15 @@ function logout() {
 /* =========================================================
    2. 최초 등록 화면
    ========================================================= */
+function registrationCompanyOptionsHtml(companies) {
+  return (
+    `<option value="">업체명 선택</option>` +
+    companies.filter((c) => !isHyundaiCompanyName(c)).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("") +
+    `<option>현대건설(주)</option>` +
+    `<option value="__new__">+ 새 업체 직접 입력</option>`
+  );
+}
+
 function renderRegister() {
   const div = document.createElement("div");
   div.innerHTML = `
@@ -465,11 +474,7 @@ function renderRegister() {
     try {
       const data = await api("/api/companies", { auth: false });
       const sel = document.getElementById("regCompanySelect");
-      sel.innerHTML =
-        `<option value="">업체명 선택</option>` +
-        data.companies.filter((c) => !isHyundaiCompanyName(c)).map((c) => `<option>${c}</option>`).join("") +
-        `<option>현대건설(주)</option>` +
-        `<option value="__new__">+ 새 업체 직접 입력</option>`;
+      sel.innerHTML = registrationCompanyOptionsHtml(data.companies);
       sel.addEventListener("change", () => {
         document.getElementById("regCompanyNew").style.display = sel.value === "__new__" ? "block" : "none";
       });
@@ -546,13 +551,16 @@ function planViewFilterOptionsHtml(companies) {
     ? `<option value="" ${sel("")}>당사</option><option value="__all__" ${sel("__all__")}>전체 업체 조회</option>`
     : `<option value="" ${sel("")}>전체</option>`;
   html += `<option disabled>업체별로 보기 ──────</option>`;
-  html += companies.map((c) => `<option value="${c}" ${sel(c)}>${c}</option>`).join("");
+  html += companies.map((c) => `<option value="${esc(c)}" ${sel(c)}>${esc(c)}</option>`).join("");
   return html;
 }
 
 // 홈 목록: 작업일자 최신순(같은 날짜면 작업 시작시간이 늦은 순) → 10개씩 보여주고 '더보기'로 10개씩 추가
 const PLAN_PAGE_SIZE = 10;
 const PLAN_BADGE_LABEL = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
+function planStatusClass(status) {
+  return Object.prototype.hasOwnProperty.call(PLAN_BADGE_LABEL, status) ? status : "";
+}
 function sortPlansForList(plans) {
   return [...plans].sort(
     (a, b) =>
@@ -563,22 +571,26 @@ function sortPlansForList(plans) {
 }
 function planCardHtml(p) {
   const badgeLabel = PLAN_BADGE_LABEL;
+  const statusClass = planStatusClass(p.status);
+  const statusLabel = badgeLabel[p.status] || p.status || "-";
+  const vendorManagerName = cleanName(p.vendorManagerName) || "-";
+  const hyundaiManagerName = cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중";
   return `
-          <div class="plan-item" onclick="go('detail', '${p.id}')">
+          <div class="plan-item" data-plan-id="${esc(p.id)}">
             <div class="top">
               <div>
-                <div class="date">${formatDateLabel(p.workDate)}</div>
-                <div class="time">${p.workTimeStart && p.workTimeEnd ? `<span>${p.workTimeStart}~${p.workTimeEnd}</span><span class="dot">·</span>` : ""}<span class="wtype">${p.workType}</span></div>
+                <div class="date">${esc(formatDateLabel(p.workDate))}</div>
+                <div class="time">${p.workTimeStart && p.workTimeEnd ? `<span>${esc(p.workTimeStart)}~${esc(p.workTimeEnd)}</span><span class="dot">·</span>` : ""}<span class="wtype">${esc(p.workType)}</span></div>
               </div>
-              <span class="badge ${p.status}">${badgeLabel[p.status] || p.status}</span>
+              <span class="badge ${statusClass}">${esc(statusLabel)}</span>
             </div>
             <div class="meta">
-              <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${p.company}</span></div>
+              <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${esc(p.company)}</span></div>
               <div class="meta-row wrap">
-                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l3 3"/></svg><span>작성 ${p.writerName || "-"}</span></span>
-                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>승인 ${p.status === "approved" && p.approverName ? p.approverName : "현대건설 검토중"}</span></span>
+                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l3 3"/></svg><span>작성 ${esc(p.writerName || "-")}</span></span>
+                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>승인 ${esc(p.status === "approved" && p.approverName ? p.approverName : "현대건설 검토중")}</span></span>
               </div>
-              <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 협력업체 ${cleanName(p.vendorManagerName) || "-"} · 현대건설 ${cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중"}</span></div>
+              <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 협력업체 ${esc(vendorManagerName)} · 현대건설 ${esc(hyundaiManagerName)}</span></div>
             </div>
           </div>`;
 }
@@ -591,6 +603,9 @@ function renderPlanListSection() {
     (list.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : "") +
     `<div class="plan-list">${shown.map(planCardHtml).join("")}</div>` +
     (list.length > shown.length ? `<button class="block" onclick="showMorePlans()">더보기 <span class="muted">(${shown.length}/${list.length})</span></button>` : "");
+  wrap.querySelectorAll(".plan-item[data-plan-id]").forEach((item) => {
+    item.addEventListener("click", () => go("detail", item.dataset.planId));
+  });
 }
 function showMorePlans() {
   state.planVisibleCount += PLAN_PAGE_SIZE;
@@ -615,7 +630,7 @@ async function loadHome(container) {
       loadHome(container);
     });
   } catch (e) {
-    container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
   }
 }
 
@@ -650,7 +665,7 @@ async function loadForm(container, planId) {
       const data = await api("/api/plans/" + encodeURIComponent(planId));
       plan = data.plan;
     } catch (e) {
-      container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+      container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
       return;
     }
   }
@@ -681,7 +696,7 @@ async function loadForm(container, planId) {
       <label>작업일자</label>
       <div class="date-wrap">
         <div id="f_workDateLabel" class="date-label"></div>
-        <input id="f_workDate" type="date" value="${plan.workDate}" />
+        <input id="f_workDate" type="date" value="${esc(plan.workDate)}" />
       </div>
       <label>작업시간</label>
       <div class="row" style="align-items:center;">
@@ -694,23 +709,23 @@ async function loadForm(container, planId) {
       <label>업체명</label>
       <select id="f_company">
         <option value="">선택</option>
-        ${formCompanies.map((c) => `<option ${plan.company === c ? "selected" : ""}>${c}</option>`).join("")}
+        ${formCompanies.map((c) => `<option value="${esc(c)}" ${plan.company === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
       </select>
       <label>작업장소/내용</label>
-      <textarea id="f_workLocation">${plan.workLocation || ""}</textarea>
+      <textarea id="f_workLocation">${esc(plan.workLocation || "")}</textarea>
       <label>작업 인원/장비</label>
-      <input id="f_workforceEquipment" type="text" value="${plan.workforceEquipment || ""}" placeholder="김현대 등 5명(관리자 1명, 유도원 3명, 300LC 1대)" />
+      <input id="f_workforceEquipment" type="text" value="${esc(plan.workforceEquipment || "")}" placeholder="김현대 등 5명(관리자 1명, 유도원 3명, 300LC 1대)" />
       <label>위험요인</label>
-      <textarea id="f_hazards">${plan.hazards || ""}</textarea>
+      <textarea id="f_hazards">${esc(plan.hazards || "")}</textarea>
       <label>저감대책</label>
-      <textarea id="f_mitigations">${plan.mitigations || ""}</textarea>
+      <textarea id="f_mitigations">${esc(plan.mitigations || "")}</textarea>
       <label>상주관리자</label>
       <div class="row">
         <div>
           <div class="muted" style="margin-bottom:4px;">협력업체</div>
           <select id="f_vendorManager">
             <option value="">업체 먼저 선택</option>
-            ${vendorManagers.map((m) => `<option value="${m.email}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
+            ${vendorManagers.map((m) => `<option value="${esc(m.email)}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
           </select>
         </div>
         <div>
@@ -720,8 +735,8 @@ async function loadForm(container, planId) {
       </div>
       <div id="formError" class="error-text"></div>
       <div class="row" style="margin-top:12px;">
-        <button onclick="savePlanForm('${planId || ""}', false)">저장</button>
-        <button class="primary" onclick="savePlanForm('${planId || ""}', true)">승인요청</button>
+        <button id="formSaveButton">저장</button>
+        <button id="formSubmitButton" class="primary">승인요청</button>
       </div>
       <div class="muted" style="margin-top:6px;">저장 = 임시저장(계속 수정 가능) · 승인요청 = 결재 프로세스 시작</div>
     </div>`;
@@ -729,8 +744,11 @@ async function loadForm(container, planId) {
   document.getElementById("f_company").addEventListener("change", async (e) => {
     const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(e.target.value));
     document.getElementById("f_vendorManager").innerHTML =
-      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${m.email}">${m.name}</option>`).join("");
+      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("");
   });
+
+  container.querySelector("#formSaveButton")?.addEventListener("click", () => savePlanForm(planId || "", false));
+  container.querySelector("#formSubmitButton")?.addEventListener("click", () => savePlanForm(planId || "", true));
 
   // 작업일자 표시: 2026.09.29(화)
   const dateInput = document.getElementById("f_workDate");
@@ -893,6 +911,8 @@ async function loadDetail(container, planId) {
     const plan = data.plan;
     state.currentPlan = plan;
     const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
+    const statusClass = planStatusClass(plan.status);
+    const statusLabel = badgeLabel[plan.status] || plan.status || "-";
     const canApprove = state.user.org === "hyundai" && plan.status === "pending";
     const canManage = state.user.org === "hyundai" || plan.company === state.user.company; // 협력업체는 같은 업체 건만
     const canEdit = plan.status !== "approved" && canManage;
@@ -908,51 +928,58 @@ async function loadDetail(container, planId) {
     container.innerHTML = `
       <div class="card">
         <div class="top" style="display:flex;justify-content:space-between;">
-          <h2>${formatDateTimeDisplay(plan.workDate, plan.workTimeStart, plan.workTimeEnd)} · ${plan.workType}</h2>
-          <span class="badge ${plan.status}">${badgeLabel[plan.status] || plan.status}</span>
+          <h2>${esc(formatDateTimeDisplay(plan.workDate, plan.workTimeStart, plan.workTimeEnd))} · ${esc(plan.workType)}</h2>
+          <span class="badge ${statusClass}">${esc(statusLabel)}</span>
         </div>
-        <p class="muted">${plan.company}</p>
-        <div class="approval-step"><span class="step-label">작성</span><span class="step-name">${plan.writerName || "-"}</span><span class="step-status">${plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : "")}</span></div>
-        <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${plan.status === "approved" && plan.approval ? plan.approval.approverName : cleanName(plan.hyundaiManagerName) || "미지정"}</span><span class="step-status">${plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중"}</span></div>
-        ${plan.rejectReason ? `<p class="error-text">반려 사유: ${plan.rejectReason}</p>` : ""}
+        <p class="muted">${esc(plan.company)}</p>
+        <div class="approval-step"><span class="step-label">작성</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
+        <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${esc(plan.status === "approved" && plan.approval ? plan.approval.approverName : cleanName(plan.hyundaiManagerName) || "미지정")}</span><span class="step-status">${esc(plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중")}</span></div>
+        ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
         ${canApprove ? `
           <label>현대건설 상주관리자</label>
           <select id="approveManager">
-            ${hyundaiManagers.map((m) => `<option value="${m.email}" ${(plan.hyundaiManagerEmail || state.user.email) === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
+            ${hyundaiManagers.map((m) => `<option value="${esc(m.email)}" ${(plan.hyundaiManagerEmail || state.user.email) === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
           </select>` : ""}
         <div class="row" style="margin-top:12px;">
-          ${canEdit ? `<button onclick="go('form', '${plan.id}')">수정</button>` : ""}
-          ${canSubmit ? `<button class="primary" onclick="submitPlanFromDetail('${plan.id}')">승인요청</button>` : ""}
-          ${canApprove ? `<button class="primary" onclick="approvePlan('${plan.id}')">승인</button>` : ""}
+          ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
+          ${canSubmit ? `<button id="detailSubmitButton" class="primary">승인요청</button>` : ""}
+          ${canApprove ? `<button id="detailApproveButton" class="primary">승인</button>` : ""}
         </div>
-        ${canApprove ? `<button class="block" style="color:var(--danger);" onclick="rejectPlan('${plan.id}')">반려</button>` : ""}
-        ${canDelete ? `<button class="block" style="color:var(--danger);" onclick="deletePlan('${plan.id}')">삭제</button>` : ""}
+        ${canApprove ? `<button id="detailRejectButton" class="block" style="color:var(--danger);">반려</button>` : ""}
+        ${canDelete ? `<button id="detailDeleteButton" class="block" style="color:var(--danger);">삭제</button>` : ""}
       </div>
       <div class="card">
         <h2>작업 내용</h2>
         <label>작업장소/내용</label>
-        <div style="white-space:pre-wrap;">${plan.workLocation || "-"}</div>
+        <div style="white-space:pre-wrap;">${esc(plan.workLocation || "-")}</div>
         <label>작업 인원/장비</label>
-        <div>${plan.workforceEquipment || "-"}</div>
+        <div>${esc(plan.workforceEquipment || "-")}</div>
         <label>위험요인</label>
-        <div style="white-space:pre-wrap;">${plan.hazards || "-"}</div>
+        <div style="white-space:pre-wrap;">${esc(plan.hazards || "-")}</div>
         <label>저감대책</label>
-        <div style="white-space:pre-wrap;">${plan.mitigations || "-"}</div>
+        <div style="white-space:pre-wrap;">${esc(plan.mitigations || "-")}</div>
         <label>상주관리자</label>
         <div class="row">
-          <div><div class="muted">협력업체</div><div>${plan.vendorManagerName || "-"}</div></div>
-          <div><div class="muted">현대건설</div><div>${plan.hyundaiManagerName || "-"}</div></div>
+          <div><div class="muted">협력업체</div><div>${esc(plan.vendorManagerName || "-")}</div></div>
+          <div><div class="muted">현대건설</div><div>${esc(plan.hyundaiManagerName || "-")}</div></div>
         </div>
       </div>
       <div class="card">
         <h2>다운로드</h2>
         <div class="row">
-          <button onclick="downloadPlan('${plan.id}', 'pdf')">PDF</button>
-          <button onclick="downloadPlan('${plan.id}', 'png')">이미지</button>
+          <button id="detailPdfButton">PDF</button>
+          <button id="detailPngButton">이미지</button>
         </div>
       </div>`;
+    container.querySelector("#detailEditButton")?.addEventListener("click", () => go("form", plan.id));
+    container.querySelector("#detailSubmitButton")?.addEventListener("click", () => submitPlanFromDetail(plan.id));
+    container.querySelector("#detailApproveButton")?.addEventListener("click", () => approvePlan(plan.id));
+    container.querySelector("#detailRejectButton")?.addEventListener("click", () => rejectPlan(plan.id));
+    container.querySelector("#detailDeleteButton")?.addEventListener("click", () => deletePlan(plan.id));
+    container.querySelector("#detailPdfButton")?.addEventListener("click", () => downloadPlan(plan.id, "pdf"));
+    container.querySelector("#detailPngButton")?.addEventListener("click", () => downloadPlan(plan.id, "png"));
   } catch (e) {
-    container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
   }
 }
 
@@ -1006,7 +1033,7 @@ function renderMyPage() {
   div.innerHTML = `
     <div class="card">
       <h2>내 정보</h2>
-      <p class="muted">${state.user.name} · ${state.user.company} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
+      <p class="muted">${esc(state.user.name)} · ${esc(state.user.company)} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
     </div>
     <div class="card">
       <h2>내 서명 등록</h2>
@@ -1135,20 +1162,26 @@ async function loadAdmin(container) {
         ${data.pending.length === 0 ? `<p class="muted">대기중인 가입 신청이 없습니다.</p>` : ""}
         ${data.pending
           .map(
-            (u) => `
+            (u, i) => `
           <div class="plan-item">
             <div class="top"><span>${esc(u.name)} (${esc(u.company)})</span></div>
             <div class="sub">${esc(u.email)} · ${esc(u.phone)}</div>
             <div class="row" style="margin-top:8px;">
-              <button class="primary" onclick="approveUser('${u.email}', true)">승인</button>
-              <button onclick="approveUser('${u.email}', false)">반려</button>
+              <button class="primary pending-user-action" data-pending-index="${i}" data-approve="true">승인</button>
+              <button class="pending-user-action" data-pending-index="${i}" data-approve="false">반려</button>
             </div>
           </div>`
           )
           .join("")}
       </div>`;
+    container.querySelectorAll(".pending-user-action").forEach((button) => {
+      button.addEventListener("click", () => {
+        const user = data.pending[Number(button.dataset.pendingIndex)];
+        if (user) approveUser(user.email, button.dataset.approve === "true");
+      });
+    });
   } catch (e) {
-    container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
   }
 }
 async function approveUser(email, approve) {
