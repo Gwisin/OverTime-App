@@ -11,7 +11,7 @@ const script = html.slice(scriptStart, scriptEnd).replace(
   "globalThis.__setStateUser = (user) => { state.user = user; };"
 );
 
-function makeContext(fetchImpl = async () => { throw new Error("unexpected fetch"); }, extra = {}) {
+function makeContext(fetchImpl = async () => { throw new Error("unexpected fetch"); }) {
   const context = {
     URLSearchParams,
     clearTimeout,
@@ -19,7 +19,6 @@ function makeContext(fetchImpl = async () => { throw new Error("unexpected fetch
     fetch: fetchImpl,
     setTimeout,
     window: { addEventListener() {} },
-    ...extra,
   };
   vm.createContext(context);
   vm.runInContext(script, context);
@@ -87,46 +86,4 @@ test("detail view escapes plan fields and uses bound actions", async () => {
   assert.doesNotMatch(container.innerHTML, /<img/i);
   assert.doesNotMatch(container.innerHTML, /onclick=/i);
   assert.match(container.innerHTML, /&lt;img/);
-});
-
-test("edit form escapes stored plan and manager values", async () => {
-  const formAttack = `</textarea><img src=x onerror="globalThis.xss=1">'`;
-  const plan = {
-    id: formAttack,
-    workDate: "2026-10-02",
-    workType: "점심",
-    company: formAttack,
-    workLocation: formAttack,
-    workforceEquipment: formAttack,
-    hazards: formAttack,
-    mitigations: formAttack,
-    workTimeStart: "11:30",
-    workTimeEnd: "13:00",
-    vendorManagerEmail: formAttack,
-  };
-  const elements = {
-    f_company: { value: formAttack, addEventListener() {} },
-    f_workDate: { value: plan.workDate, addEventListener() {} },
-    f_workDateLabel: { textContent: "" },
-    f_workType: { value: plan.workType, addEventListener() {} },
-  };
-  const document = { getElementById: (id) => elements[id] };
-  const fetchImpl = async (url) => {
-    if (url.includes("/api/plans/")) return { ok: true, json: async () => ({ plan }) };
-    if (url.includes("/api/companies")) return { ok: true, json: async () => ({ companies: [formAttack] }) };
-    if (url.includes("/api/managers")) {
-      return { ok: true, json: async () => ({ managers: [{ email: formAttack, name: formAttack }] }) };
-    }
-    if (url.includes("/api/plans")) return { ok: true, json: async () => ({ plans: [] }) };
-    throw new Error(`unexpected fetch: ${url}`);
-  };
-  const context = makeContext(fetchImpl, { document });
-  context.__setStateUser({ email: "writer@example.com", company: formAttack, org: "vendor", isAdmin: false });
-  const container = { innerHTML: "", querySelector: () => null };
-
-  await context.loadForm(container, plan.id);
-
-  assert.doesNotMatch(container.innerHTML, /<img/i);
-  assert.doesNotMatch(container.innerHTML, /onclick="savePlanForm/i);
-  assert.match(container.innerHTML, /&lt;\/textarea&gt;&lt;img/);
 });

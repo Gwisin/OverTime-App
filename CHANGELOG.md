@@ -7,9 +7,7 @@ Notable application and Worker changes are recorded here. Worker versions descri
 ### Security
 
 - Escape server-provided values in the home plan list, company filter, and plan detail view.
-- Escape existing plan, company, and manager values rendered in the plan edit form.
 - Replace plan-ID inline event handlers in those views with programmatically bound listeners.
-- Replace plan-ID inline save handlers in the edit form with programmatically bound listeners.
 - Restrict plan status CSS classes to known status values.
 
 ## [1.4.1] - 2026-10-02
