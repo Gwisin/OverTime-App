@@ -1,6 +1,14 @@
 # Changelog
 
-All notable Worker changes are recorded here. Versions describe the Worker source; actual production deployments are recorded separately in `DEPLOYMENTS.md`.
+Notable application and Worker changes are recorded here. Worker versions describe the Worker source; actual production deployments are recorded separately in `DEPLOYMENTS.md`.
+
+## [Unreleased]
+
+### Security
+
+- Escape server-provided values in the home plan list, company filter, and plan detail view.
+- Replace plan-ID inline event handlers in those views with programmatically bound listeners.
+- Restrict plan status CSS classes to known status values.
 
 ## [1.4.1] - 2026-10-02
 
