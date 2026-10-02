@@ -1,47 +1,11 @@
 /**
- * 보충작업 계획서 시스템 - Cloudflare Worker (백엔드)
- * Version: v1.4.0 (2026-10-01)
- *   - feat: 사용자 3단계(권한) 체계 정리
- *       1) 협력업체(vendor)  2) 현대건설(주)(hyundai, 협력업체 기능 포함)  3) 현대건설(주)+ADMIN(hyundai의 하위 개념, ADMIN_EMAILS)
- *       · 가입 시 회사명이 정확히 "현대건설(주)"일 때만 hyundai. "현대건설", "(주)현대건설" 같은 비슷한 이름은
- *         협력업체 목록에서 제외하고, 가입·회사명 변경에서도 거부
- *       · 회사명이 "현대건설(주)"인 기존 계정은 저장된 org가 vendor여도 hyundai로 인식(데이터 수정 불필요),
- *         ADMIN_EMAILS 계정은 회사명과 무관하게 항상 hyundai 단계를 포함
- *       · 서버에서 단계별 기능 강제: 협력업체는 자기 업체 건만 작성·수정·승인요청, 승인/반려는 현대건설 단계만,
- *         승인완료 건은 수정·승인요청 불가, 승인은 검토중 건만, 반려는 검토중 건만
- *   - fix: 작업계획서 id에 "/" 나 ".." 가 들어가면 users.json 등 다른 파일을 읽고 쓸 수 있던 보안 문제 차단
- *   - fix: 사용자 관리에서 이름·연락처 함께 저장 시 오류(String(콜) 오타) 복구
- *   - fix: 저장 요청에 승인 정보(approval) 등 서버 관리 값을 끼워 넣지 못하도록 무시
+ * OverTime Cloudflare Worker
+ * Version: 1.4.1 (2026-10-02)
  *
- * Version: v1.3.0 (2026-09-30)
- *   - feat: 작업계획서 삭제 범위 확대 — 작성중: 현대건설/작성자, 검토중: 현대건설만 (승인완료는 삭제 불가)
- *
- * Version: v1.2.0 (2026-09-29)
- *   - feat: handleListPlans에 scope(all)/company(특정 업체) 조회 파라미터 추가.
- *           다른 협력업체가 어떻게 작성했는지 참고 조회할 수 있도록,
- *           기본값(협력업체는 자기 회사만, 현대건설/ADMIN은 전체)은 유지하면서
- *           원하면 전체 조회 또는 특정 업체 조회를 선택할 수 있게 함(조회 전용, 수정/결재 권한은 미변경)
- *
- * Version: v1.1.0 (2026-09-29)
- *   - fix: ADMIN 계정(소속이 협력업체인 경우 포함)이 전체 작업계획서를 조회하도록 수정
- *          (handleListPlans의 vendor 필터가 org만 보고 isAdmin을 반영하지 않던 문제)
- *   - improve: handleAdminRenameCompany 처리 순서 변경 — 작업계획서(plan/index)의 company를
- *              전부 바꾼 마지막 호출에서만 users.json을 바꾸도록 하여, 중간에 실패해도
- *              "사용자만 새 이름"인 불일치 상태가 남지 않고, 동일 요청 반복 호출에 안전(idempotent)함
- *
- * 이 Worker는 GitHub 저장소를 데이터베이스처럼 사용합니다.
- * - users.json            : 가입자 목록 (이메일, 이름, 업체, 소속, 승인여부, 서명이미지경로)
- * - data/index.json       : 작업계획서 목록 요약 (빠른 목록 조회용)
- * - data/plans/{id}.json  : 작업계획서 상세 내용
- * - signatures/{email}.png: 서명 이미지
- *
- * 필요한 환경변수(Secrets / Variables), Cloudflare 대시보드에서 설정:
- *   GITHUB_TOKEN   : GitHub Fine-grained PAT (이 저장소 Contents 읽기/쓰기 권한만)
- *   GITHUB_OWNER   : GitHub 계정명 (예: myaccount)
- *   GITHUB_REPO    : 저장소 이름 (예: work-plan-data)
- *   GITHUB_BRANCH  : 브랜치명 (기본 main)
- *   GOOGLE_CLIENT_ID : Google Cloud Console에서 발급받은 OAuth 클라이언트 ID
- *   ALLOWED_ORIGIN : 프론트엔드가 호스팅된 주소 (예: https://myaccount.github.io)
+ * Source of truth: worker/worker.js
+ * Release history: CHANGELOG.md
+ * Manual deployment record and checklist: DEPLOYMENTS.md
+ * Runtime data contract and environment variables: worker/README.md
  */
 
 function corsHeaders(env) {
@@ -193,6 +157,13 @@ function effectiveOrg(env, email, record) {
 function tierOf(env, email, record) {
   return isAdminEmail(env, email) ? "admin" : recordOrg(record);
 }
+
+// 로그인 응답과 보호 API가 동일한 계정 상태 규칙을 사용하도록 한 곳에서 판정한다.
+// org/tier는 역할이고 status는 가입 승인 상태이므로 서로 대신해서 사용하지 않는다.
+export function accountStatusOf(record) {
+  if (!record) return "not_registered";
+  return ["pending", "rejected", "suspended", "approved"].includes(record.status) ? record.status : "invalid";
+}
 // 작업계획서 id는 파일 경로에 그대로 쓰이므로 경로 조작 문자를 허용하지 않는다
 function isSafePlanId(id) {
   return typeof id === "string" && id.length > 0 && id.length <= 200 && !/[\/\\\u0000-\u001f]/.test(id) && id !== "." && id !== "..";
@@ -275,18 +246,22 @@ async function handleAuth(request, env) {
   const usersFile = await ghGetJson(env, "users.json");
   const users = usersFile ? usersFile.json : {};
   const record = users[googleUser.email];
+  const accountStatus = accountStatusOf(record);
 
-  if (!record) {
+  if (accountStatus === "not_registered") {
     return json({ status: "not_registered", email: googleUser.email, name: googleUser.name }, 200, env);
   }
-  if (record.status === "pending") {
+  if (accountStatus === "pending") {
     return json({ status: "pending", email: googleUser.email }, 200, env);
   }
-  if (record.status === "rejected") {
+  if (accountStatus === "rejected") {
     return json({ status: "rejected", email: googleUser.email }, 200, env);
   }
-  if (record.status === "suspended") {
+  if (accountStatus === "suspended") {
     return json({ status: "suspended", email: googleUser.email }, 200, env);
+  }
+  if (accountStatus !== "approved") {
+    return json({ error: "계정 상태를 확인할 수 없습니다. 관리자에게 문의해주세요.", status: "invalid" }, 403, env);
   }
   return json(
     {
@@ -861,7 +836,7 @@ export default {
 
       const usersFile = await ghGetJson(env, "users.json");
       const userRecord = usersFile && usersFile.json[currentUserGoogle.email];
-      if (!userRecord || userRecord.status !== "approved") {
+      if (accountStatusOf(userRecord) !== "approved") {
         return json({ error: "승인되지 않은 계정입니다." }, 403, env);
       }
       const currentUser = {
