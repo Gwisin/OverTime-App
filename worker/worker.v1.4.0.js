@@ -193,6 +193,13 @@ function effectiveOrg(env, email, record) {
 function tierOf(env, email, record) {
   return isAdminEmail(env, email) ? "admin" : recordOrg(record);
 }
+
+// 로그인 응답과 보호 API가 동일한 계정 상태 규칙을 사용하도록 한 곳에서 판정한다.
+// org/tier는 역할이고 status는 가입 승인 상태이므로 서로 대신해서 사용하지 않는다.
+export function accountStatusOf(record) {
+  if (!record) return "not_registered";
+  return ["pending", "rejected", "suspended", "approved"].includes(record.status) ? record.status : "invalid";
+}
 // 작업계획서 id는 파일 경로에 그대로 쓰이므로 경로 조작 문자를 허용하지 않는다
 function isSafePlanId(id) {
   return typeof id === "string" && id.length > 0 && id.length <= 200 && !/[\/\\\u0000-\u001f]/.test(id) && id !== "." && id !== "..";
@@ -275,18 +282,22 @@ async function handleAuth(request, env) {
   const usersFile = await ghGetJson(env, "users.json");
   const users = usersFile ? usersFile.json : {};
   const record = users[googleUser.email];
+  const accountStatus = accountStatusOf(record);
 
-  if (!record) {
+  if (accountStatus === "not_registered") {
     return json({ status: "not_registered", email: googleUser.email, name: googleUser.name }, 200, env);
   }
-  if (record.status === "pending") {
+  if (accountStatus === "pending") {
     return json({ status: "pending", email: googleUser.email }, 200, env);
   }
-  if (record.status === "rejected") {
+  if (accountStatus === "rejected") {
     return json({ status: "rejected", email: googleUser.email }, 200, env);
   }
-  if (record.status === "suspended") {
+  if (accountStatus === "suspended") {
     return json({ status: "suspended", email: googleUser.email }, 200, env);
+  }
+  if (accountStatus !== "approved") {
+    return json({ error: "계정 상태를 확인할 수 없습니다. 관리자에게 문의해주세요.", status: "invalid" }, 403, env);
   }
   return json(
     {
@@ -861,7 +872,7 @@ export default {
 
       const usersFile = await ghGetJson(env, "users.json");
       const userRecord = usersFile && usersFile.json[currentUserGoogle.email];
-      if (!userRecord || userRecord.status !== "approved") {
+      if (accountStatusOf(userRecord) !== "approved") {
         return json({ error: "승인되지 않은 계정입니다." }, 403, env);
       }
       const currentUser = {
