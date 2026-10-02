@@ -660,7 +660,7 @@ async function loadForm(container, planId) {
       const data = await api("/api/plans/" + encodeURIComponent(planId));
       plan = data.plan;
     } catch (e) {
-      container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+      container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
       return;
     }
   }
@@ -691,7 +691,7 @@ async function loadForm(container, planId) {
       <label>작업일자</label>
       <div class="date-wrap">
         <div id="f_workDateLabel" class="date-label"></div>
-        <input id="f_workDate" type="date" value="${plan.workDate}" />
+        <input id="f_workDate" type="date" value="${esc(plan.workDate)}" />
       </div>
       <label>작업시간</label>
       <div class="row" style="align-items:center;">
@@ -704,23 +704,23 @@ async function loadForm(container, planId) {
       <label>업체명</label>
       <select id="f_company">
         <option value="">선택</option>
-        ${formCompanies.map((c) => `<option ${plan.company === c ? "selected" : ""}>${c}</option>`).join("")}
+        ${formCompanies.map((c) => `<option value="${esc(c)}" ${plan.company === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
       </select>
       <label>작업장소/내용</label>
-      <textarea id="f_workLocation">${plan.workLocation || ""}</textarea>
+      <textarea id="f_workLocation">${esc(plan.workLocation || "")}</textarea>
       <label>작업 인원/장비</label>
-      <input id="f_workforceEquipment" type="text" value="${plan.workforceEquipment || ""}" placeholder="김현대 등 5명(관리자 1명, 유도원 3명, 300LC 1대)" />
+      <input id="f_workforceEquipment" type="text" value="${esc(plan.workforceEquipment || "")}" placeholder="김현대 등 5명(관리자 1명, 유도원 3명, 300LC 1대)" />
       <label>위험요인</label>
-      <textarea id="f_hazards">${plan.hazards || ""}</textarea>
+      <textarea id="f_hazards">${esc(plan.hazards || "")}</textarea>
       <label>저감대책</label>
-      <textarea id="f_mitigations">${plan.mitigations || ""}</textarea>
+      <textarea id="f_mitigations">${esc(plan.mitigations || "")}</textarea>
       <label>상주관리자</label>
       <div class="row">
         <div>
           <div class="muted" style="margin-bottom:4px;">협력업체</div>
           <select id="f_vendorManager">
             <option value="">업체 먼저 선택</option>
-            ${vendorManagers.map((m) => `<option value="${m.email}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${m.name}</option>`).join("")}
+            ${vendorManagers.map((m) => `<option value="${esc(m.email)}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
           </select>
         </div>
         <div>
@@ -730,8 +730,8 @@ async function loadForm(container, planId) {
       </div>
       <div id="formError" class="error-text"></div>
       <div class="row" style="margin-top:12px;">
-        <button onclick="savePlanForm('${planId || ""}', false)">저장</button>
-        <button class="primary" onclick="savePlanForm('${planId || ""}', true)">승인요청</button>
+        <button id="formSaveButton">저장</button>
+        <button id="formSubmitButton" class="primary">승인요청</button>
       </div>
       <div class="muted" style="margin-top:6px;">저장 = 임시저장(계속 수정 가능) · 승인요청 = 결재 프로세스 시작</div>
     </div>`;
@@ -739,8 +739,11 @@ async function loadForm(container, planId) {
   document.getElementById("f_company").addEventListener("change", async (e) => {
     const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(e.target.value));
     document.getElementById("f_vendorManager").innerHTML =
-      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${m.email}">${m.name}</option>`).join("");
+      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("");
   });
+
+  container.querySelector("#formSaveButton")?.addEventListener("click", () => savePlanForm(planId || "", false));
+  container.querySelector("#formSubmitButton")?.addEventListener("click", () => savePlanForm(planId || "", true));
 
   // 작업일자 표시: 2026.09.29(화)
   const dateInput = document.getElementById("f_workDate");
