@@ -302,7 +302,7 @@ function renderHeader() {
   header.innerHTML = `
     <div class="title" style="cursor:pointer" onclick="go('home')">보충작업계획서</div>
     <div class="user">
-      <div class="userinfo"><span>${state.user.name}</span><span>${state.user.company}</span></div>
+      <div class="userinfo"><span>${esc(state.user.name)}</span><span>${esc(state.user.company)}</span></div>
       <button class="link" onclick="go('mypage')">마이페이지</button>
       <button class="link" onclick="logout()">로그아웃</button>
     </div>`;
@@ -445,6 +445,15 @@ function logout() {
 /* =========================================================
    2. 최초 등록 화면
    ========================================================= */
+function registrationCompanyOptionsHtml(companies) {
+  return (
+    `<option value="">업체명 선택</option>` +
+    companies.filter((c) => !isHyundaiCompanyName(c)).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("") +
+    `<option>현대건설(주)</option>` +
+    `<option value="__new__">+ 새 업체 직접 입력</option>`
+  );
+}
+
 function renderRegister() {
   const div = document.createElement("div");
   div.innerHTML = `
@@ -465,11 +474,7 @@ function renderRegister() {
     try {
       const data = await api("/api/companies", { auth: false });
       const sel = document.getElementById("regCompanySelect");
-      sel.innerHTML =
-        `<option value="">업체명 선택</option>` +
-        data.companies.filter((c) => !isHyundaiCompanyName(c)).map((c) => `<option>${c}</option>`).join("") +
-        `<option>현대건설(주)</option>` +
-        `<option value="__new__">+ 새 업체 직접 입력</option>`;
+      sel.innerHTML = registrationCompanyOptionsHtml(data.companies);
       sel.addEventListener("change", () => {
         document.getElementById("regCompanyNew").style.display = sel.value === "__new__" ? "block" : "none";
       });
@@ -1028,7 +1033,7 @@ function renderMyPage() {
   div.innerHTML = `
     <div class="card">
       <h2>내 정보</h2>
-      <p class="muted">${state.user.name} · ${state.user.company} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
+      <p class="muted">${esc(state.user.name)} · ${esc(state.user.company)} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
     </div>
     <div class="card">
       <h2>내 서명 등록</h2>
@@ -1157,20 +1162,26 @@ async function loadAdmin(container) {
         ${data.pending.length === 0 ? `<p class="muted">대기중인 가입 신청이 없습니다.</p>` : ""}
         ${data.pending
           .map(
-            (u) => `
+            (u, i) => `
           <div class="plan-item">
             <div class="top"><span>${esc(u.name)} (${esc(u.company)})</span></div>
             <div class="sub">${esc(u.email)} · ${esc(u.phone)}</div>
             <div class="row" style="margin-top:8px;">
-              <button class="primary" onclick="approveUser('${u.email}', true)">승인</button>
-              <button onclick="approveUser('${u.email}', false)">반려</button>
+              <button class="primary pending-user-action" data-pending-index="${i}" data-approve="true">승인</button>
+              <button class="pending-user-action" data-pending-index="${i}" data-approve="false">반려</button>
             </div>
           </div>`
           )
           .join("")}
       </div>`;
+    container.querySelectorAll(".pending-user-action").forEach((button) => {
+      button.addEventListener("click", () => {
+        const user = data.pending[Number(button.dataset.pendingIndex)];
+        if (user) approveUser(user.email, button.dataset.approve === "true");
+      });
+    });
   } catch (e) {
-    container.innerHTML = `<div class="card error-text">${e.message}</div>`;
+    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
   }
 }
 async function approveUser(email, approve) {
