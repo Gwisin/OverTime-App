@@ -116,6 +116,34 @@ test("detail view escapes plan fields and uses bound actions", async () => {
   assert.equal((container.innerHTML.match(/class="detail-field-title"/g) || []).length, 5);
 });
 
+test("pending detail uses in-progress labels and paired approval actions", async () => {
+  const plan = {
+    id: "plan-1",
+    status: "pending",
+    company: "테스트 업체",
+    workDate: "2026-10-18",
+    workTimeStart: "11:30",
+    workTimeEnd: "13:00",
+    workType: "점심",
+    writerEmail: "writer@example.com",
+    writerName: "작성자",
+  };
+  const context = makeContext(async (url) => ({
+    ok: true,
+    json: async () => url.includes("/api/managers") ? { managers: [] } : { plan },
+  }));
+  context.__setStateUser({ email: "reviewer@example.com", company: "현대건설", org: "hyundai", isAdmin: false });
+  const container = { innerHTML: "", querySelector: () => null };
+
+  await context.loadDetail(container, plan.id);
+
+  assert.match(container.innerHTML, /수행팀[\s\S]*검토중/);
+  assert.match(container.innerHTML, /안전팀[\s\S]*승인중/);
+  assert.doesNotMatch(container.innerHTML, /미검토|미승인|대기중/);
+  assert.match(container.innerHTML, /수행팀 검토[\s\S]*안전팀 승인[\s\S]*수행팀 반려[\s\S]*안전팀 반려/);
+  assert.doesNotMatch(container.innerHTML, /detail(?:Execution|Safety)RejectButton" class="block"/);
+});
+
 test("edit form escapes stored plan and manager values", async () => {
   const formAttack = `</textarea><img src=x onerror="globalThis.xss=1">'`;
   const plan = {
