@@ -1320,6 +1320,7 @@ function startEditUser(i) {
     <div class="user-edit">
       <label>이름</label>
       <input id="ue-name-${i}" type="text" value="${esc(u.name)}" />
+      <div class="muted" style="margin-top:4px;">이름을 바꾸면 기존 작업계획서의 작성자, 상주관리자 및 승인자 이름도 함께 바뀝니다.</div>
       <label>회사명</label>
       <input id="ue-company-${i}" type="text" list="ue-companies-${i}" value="${esc(u.company)}" />
       <datalist id="ue-companies-${i}">${companies.map((c) => `<option value="${esc(c)}"></option>`).join("")}</datalist>
@@ -1354,13 +1355,30 @@ async function saveUserEdit(i) {
     return;
   }
   const companyChanged = company !== u.company;
+  const nameChanged = name !== u.name;
+  if (nameChanged && !confirm(`이름을 "${u.name}" → "${name}"(으)로 변경합니다.\n기존 작업계획서의 작성자, 상주관리자 및 승인자 이름도 함께 바뀝니다. 진행할까요?`)) return;
   if (companyChanged) {
     const sameCount = adminUsersState.users.filter((x) => x.company === u.company).length;
     if (!confirm(`회사명을 "${u.company}" → "${company}"(으)로 변경합니다.\n같은 업체 소속 ${sameCount}명 전원과 기존 작업계획서의 업체명이 함께 바뀝니다. 진행할까요?`)) return;
   }
   try {
-    if (name !== u.name || phone !== (u.phone || "")) {
-      await api("/api/admin/users/update", { method: "POST", body: { email: u.email, name, phone } });
+    if (nameChanged) {
+      let cursor = 0;
+      let done = 0;
+      let remaining = 1;
+      while (remaining > 0) {
+        const r = await api("/api/admin/rename-user", { method: "POST", body: { email: u.email, name, cursor } });
+        done += r.plansUpdated;
+        remaining = r.remaining;
+        cursor = r.nextCursor;
+        if (remaining > 0) {
+          msg.className = "muted";
+          msg.textContent = `작업계획서 이름 변경 중... (${done}건 변경, ${remaining}건 확인 남음)`;
+        }
+      }
+    }
+    if (phone !== (u.phone || "")) {
+      await api("/api/admin/users/update", { method: "POST", body: { email: u.email, phone } });
     }
     if (companyChanged) {
       let done = 0;

@@ -29,7 +29,7 @@ function mockExternalRequests({ email = "vendor@example.com", users = approvedUs
   const fetch = async (input, init = {}) => {
     const url = new URL(typeof input === "string" ? input : input.url);
     const method = init.method || (typeof input === "string" ? "GET" : input.method) || "GET";
-    calls.push({ url, method });
+    calls.push({ url, method, body: init.body });
 
     if (url.hostname === "oauth2.googleapis.com") {
       return Response.json({ aud: env.GOOGLE_CLIENT_ID, email, email_verified: "true", name: email });
@@ -116,6 +116,83 @@ test("ADMIN can review signups and use ADMIN routes even with a vendor record", 
   await withMockFetch({ email: "admin@example.com" }, async () => {
     assert.equal((await request("/api/users/pending")).status, 200);
     assert.equal((await request("/api/admin/users")).status, 200);
+  });
+});
+
+test("ADMIN name changes update every email-linked plan role and its list summary", async () => {
+  const files = {
+    "data/index.json": [
+      {
+        id: "linked-plan",
+        status: "approved",
+        writerName: "Vendor",
+        vendorManagerName: "Vendor",
+        hyundaiManagerName: "Vendor",
+        approverName: "Vendor",
+      },
+      { id: "same-name-plan", status: "draft", writerName: "Vendor" },
+    ],
+    "data/plans/linked-plan.json": {
+      id: "linked-plan",
+      status: "approved",
+      writerEmail: "vendor@example.com",
+      writerName: "Vendor",
+      vendorManagerEmail: "vendor@example.com",
+      vendorManagerName: "Vendor",
+      hyundaiManagerEmail: "vendor@example.com",
+      hyundaiManagerName: "Vendor",
+      approval: {
+        approverEmail: "vendor@example.com",
+        approverName: "Vendor",
+        approvedAt: "2026-01-01T00:00:00.000Z",
+        signatureUrl: "signatures/vendor.png",
+      },
+    },
+    "data/plans/same-name-plan.json": {
+      id: "same-name-plan",
+      status: "draft",
+      writerEmail: "other@example.com",
+      writerName: "Vendor",
+    },
+  };
+
+  await withMockFetch({ email: "admin@example.com", files }, async (calls) => {
+    const response = await request("/api/admin/rename-user", {
+      method: "POST",
+      body: { email: "vendor@example.com", name: "새 이름", cursor: 0 },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      plansUpdated: 1,
+      remaining: 0,
+      nextCursor: 2,
+      userUpdated: true,
+    });
+
+    const puts = calls.filter(({ method }) => method === "PUT");
+    const putJson = (path) => {
+      const call = puts.find(({ url }) => decodeURIComponent(url.pathname).endsWith(`/contents/${path}`));
+      assert.ok(call, `missing PUT for ${path}`);
+      const payload = JSON.parse(call.body);
+      return JSON.parse(Buffer.from(payload.content, "base64").toString());
+    };
+    const plan = putJson("data/plans/linked-plan.json");
+    assert.equal(plan.writerName, "새 이름");
+    assert.equal(plan.vendorManagerName, "새 이름");
+    assert.equal(plan.hyundaiManagerName, "새 이름");
+    assert.equal(plan.approval.approverName, "새 이름");
+    assert.equal(plan.approval.approvedAt, "2026-01-01T00:00:00.000Z");
+    assert.equal(plan.approval.signatureUrl, "signatures/vendor.png");
+
+    const index = putJson("data/index.json");
+    assert.deepEqual(
+      [index[0].writerName, index[0].vendorManagerName, index[0].hyundaiManagerName, index[0].approverName],
+      ["새 이름", "새 이름", "새 이름", "새 이름"]
+    );
+    assert.equal(index[1].writerName, "Vendor");
+    assert.equal(puts.some(({ url }) => decodeURIComponent(url.pathname).endsWith("/data/plans/same-name-plan.json")), false);
+    assert.equal(putJson("users.json")["vendor@example.com"].name, "새 이름");
   });
 });
 
