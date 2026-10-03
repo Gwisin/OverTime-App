@@ -1045,9 +1045,19 @@ async function completeApprovalStep(id, stage) {
   try {
     const isExecution = stage === "execution";
     const label = isExecution ? "수행팀 검토" : "안전팀 승인";
+    let body;
+    if (!isExecution) {
+      const sel = document.getElementById("approveManager");
+      const isManual = sel && sel.value === "__manual__";
+      const managerName = isManual
+        ? document.getElementById("approveManagerManual").value.trim()
+        : sel?.value ? sel.options[sel.selectedIndex]?.text || "" : "";
+      if (!sel || !managerName) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
+      body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
+    }
     if (!confirm(`${label}를 완료하시겠습니까?`)) return;
     const action = isExecution ? "execution-review" : "safety-approve";
-    await api(`/api/plans/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    await api(`/api/plans/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
     go("detail", id);
   } catch (e) {
     alert(e.message);

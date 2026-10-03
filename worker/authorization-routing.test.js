@@ -282,7 +282,7 @@ test("save accepts a manual vendor manager and ignores Hyundai manager fields be
   });
 });
 
-test("safety approval is recorded independently and keeps pending until execution review", async () => {
+test("safety approval saves the selected Hyundai resident manager before execution review", async () => {
   const files = {
     "data/plans/pending-plan.json": {
       id: "pending-plan",
@@ -294,12 +294,17 @@ test("safety approval is recorded independently and keeps pending until executio
     "data/index.json": [{ id: "pending-plan", status: "pending" }],
   };
   await withMockFetch({ email: "hyundai@example.com", files }, async (calls) => {
-    const response = await request("/api/plans/pending-plan/safety-approve", { method: "POST" });
+    const response = await request("/api/plans/pending-plan/safety-approve", {
+      method: "POST",
+      body: { hyundaiManagerEmail: "manager@hyundai.com", hyundaiManagerName: "  현대 현장소장  " },
+    });
     assert.equal(response.status, 200);
     const planPuts = calls.filter(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/plans/pending-plan.json"));
     const payload = JSON.parse(planPuts.at(-1).body);
     const saved = JSON.parse(Buffer.from(payload.content, "base64").toString());
     assert.equal(saved.status, "pending");
+    assert.equal(saved.hyundaiManagerEmail, "manager@hyundai.com");
+    assert.equal(saved.hyundaiManagerName, "현대 현장소장");
     assert.equal(saved.safetyApproval.approverEmail, "hyundai@example.com");
     assert.equal(saved.approval, undefined);
   });
