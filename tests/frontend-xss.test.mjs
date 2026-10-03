@@ -47,6 +47,7 @@ test("home plan cards escape data and do not build inline handlers", () => {
   assert.doesNotMatch(card, /<img/i);
   assert.doesNotMatch(card, /onclick=/i);
   assert.match(card, /&lt;img/);
+  assert.doesNotMatch(card, /상주관리자 협력업체/);
   assert.equal(context.planStatusClass(attack), "");
 });
 
@@ -87,6 +88,7 @@ test("detail view escapes plan fields and uses bound actions", async () => {
   assert.doesNotMatch(container.innerHTML, /<img/i);
   assert.doesNotMatch(container.innerHTML, /onclick=/i);
   assert.match(container.innerHTML, /&lt;img/);
+  assert.equal((container.innerHTML.match(/class="detail-field-title"/g) || []).length, 5);
 });
 
 test("edit form escapes stored plan and manager values", async () => {
@@ -136,6 +138,7 @@ test("edit form escapes stored plan and manager values", async () => {
   assert.doesNotMatch(container.innerHTML, /onclick="savePlanForm/i);
   assert.match(container.innerHTML, /&lt;\/textarea&gt;&lt;img/);
   assert.match(container.innerHTML, />직접입력<\/option>/);
+  assert.match(container.innerHTML, /placeholder="8명\(관리자 2, 유도원 3, 06W 2\)"/);
 });
 
 test("download template escapes resident manager and approval identities", () => {
