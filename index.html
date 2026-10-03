@@ -69,6 +69,7 @@
   button:active { background: #f2f4f6; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.primary:active { background: #1553b8; }
+  .button-like { display: flex; align-items: center; justify-content: center; height: 44px; padding: 0 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; }
   button.block { width: 100%; margin-top: 12px; }
   button.cta { height: 46px; margin-top: 0; border-radius: 10px; font-size: 15px; }
   button:disabled { opacity: .5; cursor: not-allowed; }
@@ -121,6 +122,8 @@
   .detail-field-title::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }
 
   .signature-canvas { width: 100%; height: 150px; border: 1.5px dashed #c5ccd6; border-radius: 10px; background: #fafbfc; touch-action: none; }
+  .registration-signature { margin-top: 18px; padding-top: 2px; border-top: 1px solid var(--line); }
+  .registration-signature .signature-canvas { margin-top: 8px; }
   .tabs { display: flex; gap: 4px; margin-bottom: 12px; padding: 4px; background: #eef0f3; border-radius: 10px; }
   .tabs button { flex: 1; height: 36px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; }
   .tabs button.active { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.1); }
@@ -460,6 +463,19 @@ function renderRegister() {
       <input id="regAdminName" type="text" placeholder="김현대 대리(안전)" />
       <label>연락처</label>
       <input id="regPhone" type="tel" placeholder="숫자만 입력" maxlength="13" />
+      <div class="registration-signature">
+        <label>서명</label>
+        <p class="muted">아래 영역에 서명해주세요. 등록 후 마이페이지에서 변경할 수 있습니다.</p>
+        <canvas id="regSigPad" class="signature-canvas" width="700" height="220" aria-label="서명 입력 영역"></canvas>
+        <div class="row" style="margin-top:10px;">
+          <button type="button" onclick="clearRegisterSignature()">지우기</button>
+          <label style="margin:0;">
+            <input id="regSigFile" class="hidden" type="file" accept="image/png,image/jpeg" onchange="loadRegisterSignatureFile(this)" />
+            <span class="button-like">이미지 선택</span>
+          </label>
+        </div>
+        <div id="regSigMsg" class="muted" style="margin-top:8px;">직접 서명하거나 서명 이미지를 선택해주세요.</div>
+      </div>
       <div id="regError" class="error-text"></div>
       <button class="primary block" onclick="submitRegister()">가입 신청</button>
     </div>`;
@@ -482,8 +498,69 @@ function renderRegister() {
         : digits.length > 3 ? digits.slice(0, 3) + "-" + digits.slice(3)
         : digits;
     });
+    setupRegisterSignaturePad();
   }, 0);
   return div;
+}
+
+let regSigCtx, regSigDrawing = false, regSigHasContent = false;
+function setupRegisterSignaturePad() {
+  const canvas = document.getElementById("regSigPad");
+  if (!canvas) return;
+  regSigHasContent = false;
+  regSigCtx = canvas.getContext("2d");
+  regSigCtx.lineWidth = 3;
+  regSigCtx.lineCap = "round";
+  regSigCtx.strokeStyle = "#222";
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    return { x: (point.clientX - r.left) * canvas.width / r.width, y: (point.clientY - r.top) * canvas.height / r.height };
+  };
+  const start = (e) => { regSigDrawing = true; const p = pos(e); regSigCtx.beginPath(); regSigCtx.moveTo(p.x, p.y); e.preventDefault(); };
+  const move = (e) => { if (!regSigDrawing) return; const p = pos(e); regSigCtx.lineTo(p.x, p.y); regSigCtx.stroke(); regSigHasContent = true; e.preventDefault(); };
+  const end = () => { regSigDrawing = false; };
+  canvas.addEventListener("mousedown", start);
+  canvas.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", end);
+  canvas.addEventListener("touchstart", start);
+  canvas.addEventListener("touchmove", move);
+  canvas.addEventListener("touchend", end);
+}
+
+function clearRegisterSignature() {
+  const canvas = document.getElementById("regSigPad");
+  if (canvas && regSigCtx) regSigCtx.clearRect(0, 0, canvas.width, canvas.height);
+  regSigHasContent = false;
+  const file = document.getElementById("regSigFile");
+  if (file) file.value = "";
+  document.getElementById("regSigMsg").textContent = "직접 서명하거나 서명 이미지를 선택해주세요.";
+}
+
+function loadRegisterSignatureFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!['image/png', 'image/jpeg'].includes(file.type)) {
+    input.value = "";
+    document.getElementById("regSigMsg").textContent = "PNG 또는 JPG 이미지만 선택할 수 있습니다.";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.getElementById("regSigPad");
+      regSigCtx.clearRect(0, 0, canvas.width, canvas.height);
+      const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      regSigCtx.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+      regSigHasContent = true;
+      document.getElementById("regSigMsg").textContent = `${file.name} 이미지가 적용되었습니다.`;
+    };
+    image.src = reader.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 async function submitRegister() {
@@ -492,12 +569,13 @@ async function submitRegister() {
   const adminName = document.getElementById("regAdminName").value.trim();
   const phone = document.getElementById("regPhone").value.trim();
   const errEl = document.getElementById("regError");
-  if (!company || !adminName || !phone) {
-    errEl.textContent = "모든 항목을 입력해주세요.";
+  if (!company || !adminName || !phone || !regSigHasContent) {
+    errEl.textContent = !regSigHasContent ? "서명을 입력해주세요." : "모든 항목을 입력해주세요.";
     return;
   }
   try {
-    await api("/api/register", { method: "POST", body: { idToken: state.idToken, company, adminName, phone }, auth: false });
+    const imageBase64 = document.getElementById("regSigPad").toDataURL("image/png");
+    await api("/api/register", { method: "POST", body: { idToken: state.idToken, company, adminName, phone, imageBase64 }, auth: false });
     state.authStatus = "pending";
     render();
   } catch (e) {
