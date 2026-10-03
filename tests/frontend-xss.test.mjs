@@ -140,7 +140,7 @@ test("pending detail uses in-progress labels and paired approval actions", async
   assert.match(container.innerHTML, /수행팀[\s\S]*검토중/);
   assert.match(container.innerHTML, /안전팀[\s\S]*승인중/);
   assert.doesNotMatch(container.innerHTML, /미검토|미승인|대기중/);
-  assert.match(container.innerHTML, /수행팀 검토[\s\S]*안전팀 승인[\s\S]*수행팀 반려[\s\S]*안전팀 반려/);
+  assert.match(container.innerHTML, /수행팀 결재[\s\S]*안전팀 결재[\s\S]*수행팀 반려[\s\S]*안전팀 반려/);
   assert.doesNotMatch(container.innerHTML, /detail(?:Execution|Safety)RejectButton" class="block"/);
 });
 
