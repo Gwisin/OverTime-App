@@ -348,7 +348,7 @@ async function handleManagers(request, env, url) {
   const users = usersFile ? usersFile.json : {};
   const list = Object.entries(users)
     .filter(([email, u]) => u.status === "approved" && effectiveOrg(env, email, u) === org && (!company || u.company === company))
-    .map(([email, u]) => ({ email, name: u.name, company: u.company }));
+    .map(([email, u]) => ({ email, name: u.name, company: u.company, phone: u.phone || "" }));
   return json({ managers: list }, 200, env);
 }
 
