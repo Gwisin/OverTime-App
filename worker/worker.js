@@ -489,6 +489,14 @@ async function handleAdminRenameUser(request, env, currentUser) {
       plan.approval.approverName = name;
       changed = true;
     }
+    if (plan.executionReview && plan.executionReview.reviewerEmail === email && plan.executionReview.reviewerName !== name) {
+      plan.executionReview.reviewerName = name;
+      changed = true;
+    }
+    if (plan.safetyApproval && plan.safetyApproval.approverEmail === email && plan.safetyApproval.approverName !== name) {
+      plan.safetyApproval.approverName = name;
+      changed = true;
+    }
     if (!changed) continue;
 
     await ghPutJson(env, `data/plans/${item.id}.json`, plan, f.sha, `사용자 이름 변경: ${item.id}`);
@@ -497,6 +505,8 @@ async function handleAdminRenameUser(request, env, currentUser) {
       vendorManagerName: plan.vendorManagerName || "",
       hyundaiManagerName: plan.hyundaiManagerName || "",
       approverName: plan.status === "approved" && plan.approval ? plan.approval.approverName || "" : "",
+      executionReviewerName: plan.executionReview ? plan.executionReview.reviewerName || "" : "",
+      safetyApproverName: plan.safetyApproval ? plan.safetyApproval.approverName || "" : "",
     };
     plansUpdated++;
   }
@@ -746,7 +756,7 @@ async function handleSavePlan(request, env, currentUser) {
 
   // 서버가 관리하는 값(상태, 승인 정보, 작성자, 시각 등)은 클라이언트가 보낸 값을 무시한다
   const safeBody = { ...body };
-  ["status", "approval", "writerEmail", "writerName", "createdAt", "updatedAt", "submittedAt", "rejectedAt", "rejectReason"].forEach((k) => delete safeBody[k]);
+  ["status", "approval", "executionReview", "safetyApproval", "writerEmail", "writerName", "createdAt", "updatedAt", "submittedAt", "rejectedAt", "rejectedBy", "rejectedByName", "rejectedStage", "rejectReason"].forEach((k) => delete safeBody[k]);
   safeBody.vendorManagerEmail = normalizeManagerEmail(body.vendorManagerEmail);
   safeBody.vendorManagerName = normalizeManagerName(body.vendorManagerName, "협력업체 상주관리자");
   // 현대건설 상주관리자는 승인 단계에서만 현대건설 승인자가 지정한다.
@@ -783,6 +793,8 @@ async function handleSavePlan(request, env, currentUser) {
         hyundaiManagerName: plan.hyundaiManagerName || "",
         writerName: plan.writerName || "",
         approverName: plan.status === "approved" && plan.approval ? plan.approval.approverName || "" : "",
+        executionReviewerName: plan.executionReview ? plan.executionReview.reviewerName || "" : "",
+        safetyApproverName: plan.safetyApproval ? plan.safetyApproval.approverName || "" : "",
         updatedAt: now,
       };
       if (idx >= 0) list[idx] = summary;
@@ -814,41 +826,84 @@ async function handleSubmitPlan(request, env, id, currentUser) {
     plan.vendorManagerName = vendorManagerName;
     plan.vendorManagerEmail = normalizeManagerEmail(plan.vendorManagerEmail);
     plan.submittedAt = new Date().toISOString();
+    delete plan.executionReview;
+    delete plan.safetyApproval;
+    delete plan.rejectedAt;
+    delete plan.rejectedBy;
+    delete plan.rejectedByName;
+    delete plan.rejectedStage;
+    delete plan.rejectReason;
   });
   return json({ ok: true }, 200, env);
 }
 
-async function handleApprovePlan(request, env, id, currentUser) {
+async function requireHyundaiSignature(env, currentUser, actionLabel) {
   if (currentUser.org !== "hyundai") {
-    return json({ error: "현대건설 소속만 승인할 수 있습니다." }, 403, env);
-  }
-  const planFile = await ghGetJson(env, `data/plans/${id}.json`);
-  if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
-  if (planFile.json.status !== "pending") {
-    return json({ error: "검토중인 작업계획서만 승인할 수 있습니다." }, 400, env);
+    throw Object.assign(new Error(`현대건설 소속만 ${actionLabel}할 수 있습니다.`), { status: 403 });
   }
   const usersFile = await ghGetJson(env, "users.json");
   const users = usersFile ? usersFile.json : {};
   const signatureUrl = (users[currentUser.email] && users[currentUser.email].signatureUrl) || null;
   if (!signatureUrl) {
-    return json({ error: "먼저 마이페이지에서 서명을 등록해주세요." }, 400, env);
+    throw Object.assign(new Error("먼저 마이페이지에서 서명을 등록해주세요."), { status: 400 });
   }
+  return signatureUrl;
+}
+
+function assertPlanInApproval(plan, actionLabel) {
+  if (!["pending", "approving"].includes(plan.status)) {
+    throw Object.assign(new Error(`승인요청된 작업계획서만 ${actionLabel}할 수 있습니다.`), { status: 400 });
+  }
+}
+
+async function handleExecutionReview(request, env, id, currentUser) {
+  const signatureUrl = await requireHyundaiSignature(env, currentUser, "수행팀 검토");
+  const planFile = await ghGetJson(env, `data/plans/${id}.json`);
+  if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
+  assertPlanInApproval(planFile.json, "수행팀 검토");
+  if (planFile.json.executionReview) return json({ error: "이미 수행팀 검토가 완료되었습니다." }, 400, env);
+  await updatePlanStatus(env, id, planFile.json.safetyApproval ? "approved" : "approving", (plan) => {
+    plan.executionReview = {
+      reviewerEmail: currentUser.email,
+      reviewerName: currentUser.name,
+      signatureUrl,
+      reviewedAt: new Date().toISOString(),
+    };
+    if (plan.safetyApproval) plan.approval = { ...plan.safetyApproval };
+  });
+  return json({ ok: true }, 200, env);
+}
+
+async function handleSafetyApprove(request, env, id, currentUser, options = {}) {
+  const signatureUrl = await requireHyundaiSignature(env, currentUser, "안전팀 승인");
+  const planFile = await ghGetJson(env, `data/plans/${id}.json`);
+  if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
+  assertPlanInApproval(planFile.json, "안전팀 승인");
+  if (planFile.json.safetyApproval) return json({ error: "이미 안전팀 승인이 완료되었습니다." }, 400, env);
   const body = await request.json().catch(() => ({}));
   const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
-  if (!hyundaiManagerName) {
+  if (options.requireManager && !hyundaiManagerName) {
     return json({ error: "현대건설 상주관리자를 선택하거나 직접 입력해주세요." }, 400, env);
   }
-  await updatePlanStatus(env, id, "approved", (plan) => {
-    plan.hyundaiManagerEmail = normalizeManagerEmail(body.hyundaiManagerEmail);
-    plan.hyundaiManagerName = hyundaiManagerName;
-    plan.approval = {
+  await updatePlanStatus(env, id, planFile.json.executionReview ? "approved" : "pending", (plan) => {
+    if (hyundaiManagerName) {
+      plan.hyundaiManagerEmail = normalizeManagerEmail(body.hyundaiManagerEmail);
+      plan.hyundaiManagerName = hyundaiManagerName;
+    }
+    plan.safetyApproval = {
       approverEmail: currentUser.email,
       approverName: currentUser.name,
       signatureUrl,
       approvedAt: new Date().toISOString(),
     };
+    // 최종 승인 시 기존 단일 승인 필드도 유지해 기존 API와 다운로드 양식의 호환성을 보존한다.
+    if (plan.executionReview) plan.approval = { ...plan.safetyApproval };
   });
   return json({ ok: true }, 200, env);
+}
+
+async function handleApprovePlan(request, env, id, currentUser) {
+  return handleSafetyApprove(request, env, id, currentUser, { requireManager: true });
 }
 
 async function handleRejectPlan(request, env, id, currentUser) {
@@ -857,13 +912,22 @@ async function handleRejectPlan(request, env, id, currentUser) {
   }
   const planFile = await ghGetJson(env, `data/plans/${id}.json`);
   if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
-  if (planFile.json.status !== "pending") {
-    return json({ error: "검토중인 작업계획서만 반려할 수 있습니다." }, 400, env);
+  if (!["pending", "approving"].includes(planFile.json.status)) {
+    return json({ error: "승인요청된 작업계획서만 반려할 수 있습니다." }, 400, env);
   }
-  const { reason } = await request.json();
+  const { reason, stage: requestedStage } = await request.json();
+  // 기존 클라이언트의 단계 없는 /reject 요청은 종전 승인 단계인 안전팀 반려로 처리한다.
+  const stage = requestedStage || "safety";
+  if (!["execution", "safety"].includes(stage)) return json({ error: "잘못된 반려 단계입니다." }, 400, env);
   await updatePlanStatus(env, id, "draft", (plan) => {
     plan.rejectReason = reason || "";
     plan.rejectedAt = new Date().toISOString();
+    plan.rejectedBy = currentUser.email;
+    plan.rejectedByName = currentUser.name;
+    plan.rejectedStage = stage;
+    delete plan.executionReview;
+    delete plan.safetyApproval;
+    delete plan.approval;
   });
   return json({ ok: true }, 200, env);
 }
@@ -874,8 +938,8 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
   }
   const planFile = await ghGetJson(env, `data/plans/${id}.json`);
   if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
-  if (planFile.json.status !== "approved") {
-    return json({ error: "승인완료된 작업계획서만 상주관리자를 변경할 수 있습니다." }, 400, env);
+  if (!["pending", "approving", "approved"].includes(planFile.json.status)) {
+    return json({ error: "승인요청 이후에만 상주관리자를 지정하거나 변경할 수 있습니다." }, 400, env);
   }
   const body = await request.json().catch(() => ({}));
   const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
@@ -889,7 +953,7 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
     hyundaiManagerName,
     updatedAt: now,
   };
-  await ghPutJson(env, `data/plans/${id}.json`, plan, planFile.sha, `현대건설 상주관리자 변경: ${id}`);
+  await ghPutJson(env, `data/plans/${id}.json`, plan, planFile.sha, `현대건설 상주관리자 지정/변경: ${id}`);
   await updateJsonWithRetry(
     env,
     "data/index.json",
@@ -926,6 +990,8 @@ async function updatePlanStatus(env, id, status, mutatorFn) {
         list[idx].hyundaiManagerName = plan.hyundaiManagerName || "";
         list[idx].writerName = plan.writerName || "";
         list[idx].approverName = plan.status === "approved" && plan.approval ? plan.approval.approverName || "" : "";
+        list[idx].executionReviewerName = plan.executionReview ? plan.executionReview.reviewerName || "" : "";
+        list[idx].safetyApproverName = plan.safetyApproval ? plan.safetyApproval.approverName || "" : "";
       }
       return list;
     },
@@ -944,7 +1010,7 @@ async function handleDeletePlan(request, env, id, currentUser) {
   const isWriter = currentUser.email === plan.writerEmail;
   if (plan.status === "draft") {
     if (!(isHyundai || isWriter)) return json({ error: "삭제 권한이 없습니다." }, 403, env);
-  } else if (plan.status === "pending") {
+  } else if (["pending", "approving"].includes(plan.status)) {
     if (!isHyundai) return json({ error: "검토중인 작업계획서는 현대건설만 삭제할 수 있습니다." }, 403, env);
   } else {
     return json({ error: "작성중 또는 검토중 상태의 작업계획서만 삭제할 수 있습니다." }, 400, env);
@@ -1019,7 +1085,7 @@ export default {
       if (path === "/api/plans" && request.method === "GET") return await handleListPlans(request, env, url, currentUser);
       if (path === "/api/plans" && request.method === "POST") return await handleSavePlan(request, env, currentUser);
 
-      const planIdMatch = path.match(/^\/api\/plans\/([^/]+)(\/(submit|approve|reject|hyundai-manager))?$/);
+      const planIdMatch = path.match(/^\/api\/plans\/([^/]+)(\/(submit|execution-review|safety-approve|approve|reject|hyundai-manager))?$/);
       if (planIdMatch) {
         const id = decodeURIComponent(planIdMatch[1]);
         const action = planIdMatch[3];
@@ -1027,6 +1093,8 @@ export default {
         if (request.method === "GET" && !action) return await handleGetPlan(request, env, id);
         if (request.method === "DELETE" && !action) return await handleDeletePlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "submit") return await handleSubmitPlan(request, env, id, currentUser);
+        if (request.method === "POST" && action === "execution-review") return await handleExecutionReview(request, env, id, currentUser);
+        if (request.method === "POST" && action === "safety-approve") return await handleSafetyApprove(request, env, id, currentUser);
         if (request.method === "POST" && action === "approve") return await handleApprovePlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "reject") return await handleRejectPlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "hyundai-manager") return await handleChangeHyundaiManager(request, env, id, currentUser);
