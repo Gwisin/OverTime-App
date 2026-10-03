@@ -209,13 +209,106 @@ test("vendor cannot submit another company's plan or approve and reject plans", 
 
 test("Hyundai can submit draft plans, but approval and rejection require pending status", async () => {
   const files = {
-    "data/plans/draft-plan.json": { id: "draft-plan", company: "협력사", status: "draft", writerEmail: "vendor@example.com" },
+    "data/plans/draft-plan.json": {
+      id: "draft-plan",
+      company: "협력사",
+      status: "draft",
+      writerEmail: "vendor@example.com",
+      vendorManagerName: "현장소장",
+    },
     "data/index.json": [],
   };
   await withMockFetch({ email: "hyundai@example.com", files }, async () => {
     assert.equal((await request("/api/plans/draft-plan/submit", { method: "POST" })).status, 200);
     assert.equal((await request("/api/plans/draft-plan/approve", { method: "POST", body: {} })).status, 400);
     assert.equal((await request("/api/plans/draft-plan/reject", { method: "POST", body: { reason: "reason" } })).status, 400);
+  });
+});
+
+test("submission requires a vendor resident manager but does not require a Hyundai resident manager", async () => {
+  const files = {
+    "data/plans/missing-manager.json": { id: "missing-manager", company: "협력사", status: "draft", writerEmail: "vendor@example.com" },
+    "data/plans/manual-manager.json": {
+      id: "manual-manager",
+      company: "협력사",
+      status: "draft",
+      writerEmail: "vendor@example.com",
+      vendorManagerEmail: "",
+      vendorManagerName: "  미가입 현장소장  ",
+      hyundaiManagerEmail: "",
+      hyundaiManagerName: "",
+    },
+    "data/index.json": [],
+  };
+  await withMockFetch({ files }, async (calls) => {
+    const missing = await request("/api/plans/missing-manager/submit", { method: "POST" });
+    assert.equal(missing.status, 400);
+    assert.deepEqual(await missing.json(), { error: "협력업체 상주관리자를 선택하거나 직접 입력해주세요." });
+
+    const submitted = await request("/api/plans/manual-manager/submit", { method: "POST" });
+    assert.equal(submitted.status, 200);
+    const planPut = calls.find(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/plans/manual-manager.json"));
+    const payload = JSON.parse(planPut.body);
+    const saved = JSON.parse(Buffer.from(payload.content, "base64").toString());
+    assert.equal(saved.vendorManagerName, "미가입 현장소장");
+    assert.equal(saved.hyundaiManagerName, "");
+  });
+});
+
+test("save accepts a manual vendor manager and ignores Hyundai manager fields before approval", async () => {
+  const files = { "data/index.json": [] };
+  await withMockFetch({ files }, async (calls) => {
+    const response = await request("/api/plans", {
+      method: "POST",
+      body: {
+        workDate: "2026-10-03",
+        company: "협력사",
+        workType: "점심",
+        vendorManagerEmail: "",
+        vendorManagerName: "  미가입 협력소장  ",
+        hyundaiManagerEmail: "spoofed@hyundai.com",
+        hyundaiManagerName: "작성자가 지정한 이름",
+      },
+    });
+    assert.equal(response.status, 200);
+    const planPut = calls.find(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).includes("/data/plans/"));
+    const payload = JSON.parse(planPut.body);
+    const saved = JSON.parse(Buffer.from(payload.content, "base64").toString());
+    assert.equal(saved.writerEmail, "vendor@example.com");
+    assert.equal(saved.vendorManagerEmail, "");
+    assert.equal(saved.vendorManagerName, "미가입 협력소장");
+    assert.equal(saved.hyundaiManagerEmail, undefined);
+    assert.equal(saved.hyundaiManagerName, undefined);
+  });
+});
+
+test("approval keeps a manual Hyundai manager separate from the signed-in approver", async () => {
+  const files = {
+    "data/plans/pending-plan.json": {
+      id: "pending-plan",
+      company: "협력사",
+      status: "pending",
+      writerEmail: "vendor@example.com",
+      vendorManagerName: "협력소장",
+    },
+    "data/index.json": [{ id: "pending-plan", status: "pending" }],
+  };
+  await withMockFetch({ email: "hyundai@example.com", files }, async (calls) => {
+    const missing = await request("/api/plans/pending-plan/approve", { method: "POST", body: {} });
+    assert.equal(missing.status, 400);
+
+    const response = await request("/api/plans/pending-plan/approve", {
+      method: "POST",
+      body: { hyundaiManagerEmail: "", hyundaiManagerName: "  미가입 현대소장  " },
+    });
+    assert.equal(response.status, 200);
+    const planPuts = calls.filter(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/plans/pending-plan.json"));
+    const payload = JSON.parse(planPuts.at(-1).body);
+    const saved = JSON.parse(Buffer.from(payload.content, "base64").toString());
+    assert.equal(saved.hyundaiManagerEmail, "");
+    assert.equal(saved.hyundaiManagerName, "미가입 현대소장");
+    assert.equal(saved.approval.approverEmail, "hyundai@example.com");
+    assert.equal(saved.approval.approverName, "Hyundai");
   });
 });
 

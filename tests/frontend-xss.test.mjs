@@ -109,6 +109,12 @@ test("edit form escapes stored plan and manager values", async () => {
     f_workDate: { value: plan.workDate, addEventListener() {} },
     f_workDateLabel: { textContent: "" },
     f_workType: { value: plan.workType, addEventListener() {} },
+    f_vendorManager: { value: formAttack, addEventListener() {} },
+    f_vendorManagerManual: {
+      value: "",
+      classList: { add() {}, toggle() {} },
+      focus() {},
+    },
   };
   const document = { getElementById: (id) => elements[id] };
   const fetchImpl = async (url) => {
@@ -129,6 +135,27 @@ test("edit form escapes stored plan and manager values", async () => {
   assert.doesNotMatch(container.innerHTML, /<img/i);
   assert.doesNotMatch(container.innerHTML, /onclick="savePlanForm/i);
   assert.match(container.innerHTML, /&lt;\/textarea&gt;&lt;img/);
+  assert.match(container.innerHTML, />직접입력<\/option>/);
+});
+
+test("download template escapes resident manager and approval identities", () => {
+  const context = makeContext();
+  const rendered = context.planToTemplateHtml({
+    company: attack,
+    workDate: "2026-10-03",
+    workType: attack,
+    workLocation: attack,
+    workforceEquipment: attack,
+    hazards: attack,
+    mitigations: attack,
+    vendorManagerName: attack,
+    hyundaiManagerName: attack,
+    writerName: attack,
+    approval: { approverName: attack, approvedAt: "2026-10-03T01:00:00.000Z" },
+  });
+
+  assert.doesNotMatch(rendered, /<img/i);
+  assert.match(rendered, /&lt;img/);
 });
 
 test("identity and registration views escape user and company values", () => {
