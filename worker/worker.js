@@ -290,7 +290,7 @@ async function handleRegister(request, env) {
   const googleUser = await verifyGoogleToken(env, body.idToken);
   if (!googleUser) return json({ error: "로그인 정보를 확인할 수 없습니다." }, 401, env);
 
-  const { company, adminName, phone } = body;
+  const { company, adminName, phone, imageBase64 } = body;
   if (!company || !adminName || !phone) {
     return json({ error: "업체명, 관리자명, 연락처를 모두 입력해주세요." }, 400, env);
   }
@@ -299,6 +299,13 @@ async function handleRegister(request, env) {
     return json({ error: `현대건설 소속은 드롭다운에서 "${HYUNDAI_COMPANY}"를 선택해주세요.` }, 400, env);
   }
   const org = orgFromCompany(companyName);
+  let signatureUrl = null;
+  if (imageBase64) {
+    const base64 = signatureBase64(imageBase64);
+    signatureUrl = `signatures/${safeEmailFile(googleUser.email)}`;
+    const existing = await ghGetFile(env, signatureUrl);
+    await ghPutBinaryBase64(env, signatureUrl, base64, existing ? existing.sha : undefined, `가입 서명 등록: ${googleUser.email}`);
+  }
 
   await updateJsonWithRetry(
     env,
@@ -310,7 +317,7 @@ async function handleRegister(request, env) {
         org,
         phone,
         status: "pending",
-        signatureUrl: null,
+        signatureUrl,
         createdAt: new Date().toISOString(),
       };
       return users;
@@ -373,7 +380,7 @@ async function handleApproveUser(request, env, approverEmail) {
 
 async function handleSignatureUpload(request, env, userEmail) {
   const { imageBase64 } = await request.json();
-  const base64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  const base64 = signatureBase64(imageBase64);
   const path = `signatures/${safeEmailFile(userEmail)}`;
   const existing = await ghGetFile(env, path);
   await ghPutBinaryBase64(env, path, base64, existing ? existing.sha : undefined, `서명 등록: ${userEmail}`);
@@ -835,6 +842,17 @@ async function handleSubmitPlan(request, env, id, currentUser) {
     delete plan.rejectReason;
   });
   return json({ ok: true }, 200, env);
+}
+
+function signatureBase64(dataUrl) {
+  if (typeof dataUrl !== "string" || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) {
+    throw Object.assign(new Error("PNG 또는 JPG 형식의 서명 이미지를 등록해주세요."), { status: 400 });
+  }
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  if (base64.length > 2_000_000) {
+    throw Object.assign(new Error("서명 이미지는 1.5MB 이하로 등록해주세요."), { status: 400 });
+  }
+  return base64;
 }
 
 async function requireHyundaiSignature(env, currentUser, actionLabel) {
