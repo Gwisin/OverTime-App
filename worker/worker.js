@@ -159,6 +159,22 @@ function isSafePlanId(id) {
   return typeof id === "string" && id.length > 0 && id.length <= 200 && !/[\/\\\u0000-\u001f]/.test(id) && id !== "." && id !== "..";
 }
 
+function normalizeManagerName(value, label) {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") {
+    throw Object.assign(new Error(`${label} 이름이 올바르지 않습니다.`), { status: 400 });
+  }
+  const name = value.trim();
+  if (name.length > 100) {
+    throw Object.assign(new Error(`${label} 이름은 100자 이하로 입력해주세요.`), { status: 400 });
+  }
+  return name;
+}
+
+function normalizeManagerEmail(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
 async function ghDeleteFile(env, path, sha, message) {
   const res = await fetch(ghUrl(env, path), {
     method: "DELETE",
@@ -731,6 +747,11 @@ async function handleSavePlan(request, env, currentUser) {
   // 서버가 관리하는 값(상태, 승인 정보, 작성자, 시각 등)은 클라이언트가 보낸 값을 무시한다
   const safeBody = { ...body };
   ["status", "approval", "writerEmail", "writerName", "createdAt", "updatedAt", "submittedAt", "rejectedAt", "rejectReason"].forEach((k) => delete safeBody[k]);
+  safeBody.vendorManagerEmail = normalizeManagerEmail(body.vendorManagerEmail);
+  safeBody.vendorManagerName = normalizeManagerName(body.vendorManagerName, "협력업체 상주관리자");
+  // 현대건설 상주관리자는 승인 단계에서만 현대건설 승인자가 지정한다.
+  delete safeBody.hyundaiManagerEmail;
+  delete safeBody.hyundaiManagerName;
 
   const plan = {
     ...(existingFile ? existingFile.json : {}),
@@ -785,7 +806,13 @@ async function handleSubmitPlan(request, env, id, currentUser) {
   if (plan0.status !== "draft" && plan0.status !== "pending") {
     return json({ error: "승인완료된 작업계획서는 승인요청할 수 없습니다." }, 400, env);
   }
+  const vendorManagerName = normalizeManagerName(plan0.vendorManagerName, "협력업체 상주관리자");
+  if (!vendorManagerName) {
+    return json({ error: "협력업체 상주관리자를 선택하거나 직접 입력해주세요." }, 400, env);
+  }
   await updatePlanStatus(env, id, "pending", (plan) => {
+    plan.vendorManagerName = vendorManagerName;
+    plan.vendorManagerEmail = normalizeManagerEmail(plan.vendorManagerEmail);
     plan.submittedAt = new Date().toISOString();
   });
   return json({ ok: true }, 200, env);
@@ -807,9 +834,13 @@ async function handleApprovePlan(request, env, id, currentUser) {
     return json({ error: "먼저 마이페이지에서 서명을 등록해주세요." }, 400, env);
   }
   const body = await request.json().catch(() => ({}));
+  const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
+  if (!hyundaiManagerName) {
+    return json({ error: "현대건설 상주관리자를 선택하거나 직접 입력해주세요." }, 400, env);
+  }
   await updatePlanStatus(env, id, "approved", (plan) => {
-    plan.hyundaiManagerEmail = body.hyundaiManagerEmail || currentUser.email;
-    plan.hyundaiManagerName = body.hyundaiManagerName || currentUser.name;
+    plan.hyundaiManagerEmail = normalizeManagerEmail(body.hyundaiManagerEmail);
+    plan.hyundaiManagerName = hyundaiManagerName;
     plan.approval = {
       approverEmail: currentUser.email,
       approverName: currentUser.name,

@@ -125,6 +125,9 @@
   .date-label { display: flex; align-items: center; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; font-size: 16px; }
   .date-wrap input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
   .fake-field { display: flex; align-items: center; height: 44px; padding: 0 12px; border: 1px dashed var(--border); border-radius: 8px; background: #f7f8fa; color: var(--muted); font-size: 14px; }
+  .manager-field { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfc; }
+  .manager-field .muted { margin-bottom: 6px; }
+  .manager-manual { margin-top: 8px; }
 
   .sig-preview { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: center; }
   .sig-preview img { max-width: 100%; max-height: 120px; }
@@ -668,6 +671,7 @@ async function loadForm(container, planId) {
       vendorManagers = r.managers;
     } catch (e) {}
   }
+  const vendorManagerIsManual = !plan.vendorManagerEmail && Boolean(cleanName(plan.vendorManagerName));
 
   container.innerHTML = `
     <div class="card">
@@ -707,12 +711,14 @@ async function loadForm(container, planId) {
       <textarea id="f_mitigations">${esc(plan.mitigations || "")}</textarea>
       <label>상주관리자</label>
       <div class="row">
-        <div>
+        <div class="manager-field">
           <div class="muted" style="margin-bottom:4px;">협력업체</div>
           <select id="f_vendorManager">
-            <option value="">업체 먼저 선택</option>
+            <option value="">${plan.company ? "선택" : "업체 먼저 선택"}</option>
             ${vendorManagers.map((m) => `<option value="${esc(m.email)}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+            <option value="__manual__" ${vendorManagerIsManual ? "selected" : ""}>직접입력</option>
           </select>
+          <input id="f_vendorManagerManual" class="manager-manual ${vendorManagerIsManual ? "" : "hidden"}" type="text" maxlength="100" value="${vendorManagerIsManual ? esc(plan.vendorManagerName) : ""}" placeholder="협력업체 상주관리자 성명" />
         </div>
         <div>
           <div class="muted" style="margin-bottom:4px;">현대건설</div>
@@ -730,7 +736,15 @@ async function loadForm(container, planId) {
   document.getElementById("f_company").addEventListener("change", async (e) => {
     const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(e.target.value));
     document.getElementById("f_vendorManager").innerHTML =
-      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("");
+      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("") +
+      `<option value="__manual__">직접입력</option>`;
+    document.getElementById("f_vendorManagerManual").value = "";
+    document.getElementById("f_vendorManagerManual").classList.add("hidden");
+  });
+  document.getElementById("f_vendorManager").addEventListener("change", (e) => {
+    const manualInput = document.getElementById("f_vendorManagerManual");
+    manualInput.classList.toggle("hidden", e.target.value !== "__manual__");
+    if (e.target.value === "__manual__") manualInput.focus();
   });
 
   container.querySelector("#formSaveButton")?.addEventListener("click", () => savePlanForm(planId || "", false));
@@ -829,6 +843,7 @@ function formatDateTimeDisplay(dateStr, startTime, endTime) {
 
 function collectFormData() {
   const vendorSel = document.getElementById("f_vendorManager");
+  const vendorIsManual = vendorSel.value === "__manual__";
   return {
     workType: document.getElementById("f_workType").value,
     workDate: document.getElementById("f_workDate").value,
@@ -839,8 +854,10 @@ function collectFormData() {
     workforceEquipment: document.getElementById("f_workforceEquipment").value,
     hazards: document.getElementById("f_hazards").value,
     mitigations: document.getElementById("f_mitigations").value,
-    vendorManagerEmail: vendorSel.value,
-    vendorManagerName: vendorSel.options[vendorSel.selectedIndex]?.text || "",
+    vendorManagerEmail: vendorIsManual ? "" : vendorSel.value,
+    vendorManagerName: vendorIsManual
+      ? document.getElementById("f_vendorManagerManual").value.trim()
+      : vendorSel.value ? vendorSel.options[vendorSel.selectedIndex]?.text || "" : "",
   };
 }
 
@@ -849,6 +866,10 @@ async function savePlanForm(planId, submitAfter) {
   const body = collectFormData();
   if (!body.workDate || !body.company || !body.workType) {
     errEl.textContent = "작업일자, 업체명, 작업구분은 필수입니다.";
+    return;
+  }
+  if (submitAfter && !body.vendorManagerName) {
+    errEl.textContent = "협력업체 상주관리자를 선택하거나 직접 입력해주세요.";
     return;
   }
   if (planId) body.id = planId;
@@ -918,14 +939,19 @@ async function loadDetail(container, planId) {
           <span class="badge ${statusClass}">${esc(statusLabel)}</span>
         </div>
         <p class="muted">${esc(plan.company)}</p>
-        <div class="approval-step"><span class="step-label">작성</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
-        <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${esc(plan.status === "approved" && plan.approval ? plan.approval.approverName : cleanName(plan.hyundaiManagerName) || "미지정")}</span><span class="step-status">${esc(plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중")}</span></div>
+        <div class="approval-step"><span class="step-label">요청</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
+        <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${esc(plan.status === "approved" && plan.approval ? plan.approval.approverName : "미승인")}</span><span class="step-status">${esc(plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중")}</span></div>
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
         ${canApprove ? `
           <label>현대건설 상주관리자</label>
-          <select id="approveManager">
-            ${hyundaiManagers.map((m) => `<option value="${esc(m.email)}" ${(plan.hyundaiManagerEmail || state.user.email) === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
-          </select>` : ""}
+          <div class="manager-field">
+            <select id="approveManager">
+              <option value="">선택</option>
+              ${hyundaiManagers.map((m) => `<option value="${esc(m.email)}" ${plan.hyundaiManagerEmail === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+              <option value="__manual__" ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "selected" : ""}>직접입력</option>
+            </select>
+            <input id="approveManagerManual" class="manager-manual ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "" : "hidden"}" type="text" maxlength="100" value="${!plan.hyundaiManagerEmail ? esc(plan.hyundaiManagerName || "") : ""}" placeholder="현대건설 상주관리자 성명" />
+          </div>` : ""}
         <div class="row" style="margin-top:12px;">
           ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
           ${canSubmit ? `<button id="detailSubmitButton" class="primary">승인요청</button>` : ""}
@@ -964,6 +990,11 @@ async function loadDetail(container, planId) {
     container.querySelector("#detailDeleteButton")?.addEventListener("click", () => deletePlan(plan.id));
     container.querySelector("#detailPdfButton")?.addEventListener("click", () => downloadPlan(plan.id, "pdf"));
     container.querySelector("#detailPngButton")?.addEventListener("click", () => downloadPlan(plan.id, "png"));
+    container.querySelector("#approveManager")?.addEventListener("change", (e) => {
+      const manualInput = container.querySelector("#approveManagerManual");
+      manualInput.classList.toggle("hidden", e.target.value !== "__manual__");
+      if (e.target.value === "__manual__") manualInput.focus();
+    });
   } catch (e) {
     container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
   }
@@ -990,10 +1021,15 @@ async function deletePlan(id) {
 }
 
 async function approvePlan(id) {
-  if (!confirm("이 작업계획서를 승인하시겠습니까?")) return;
   try {
     const sel = document.getElementById("approveManager");
-    const body = sel ? { hyundaiManagerEmail: sel.value, hyundaiManagerName: sel.options[sel.selectedIndex].text } : {};
+    const isManual = sel && sel.value === "__manual__";
+    const managerName = isManual
+      ? document.getElementById("approveManagerManual").value.trim()
+      : sel?.value ? sel.options[sel.selectedIndex]?.text || "" : "";
+    if (!sel || !managerName) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
+    if (!confirm("이 작업계획서를 승인하시겠습니까?")) return;
+    const body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
     await api(`/api/plans/${encodeURIComponent(id)}/approve`, { method: "POST", body });
     go("detail", id);
   } catch (e) {
@@ -1462,30 +1498,30 @@ function planToTemplateHtml(plan) {
     <table style="width:100%;border-collapse:collapse;">
       <tr>
         <td style="border:1px solid #000;padding:6px;width:15%;background:#f0f0f0;">업 체 명</td>
-        <td style="border:1px solid #000;padding:6px;width:35%;">${plan.company || ""}</td>
+        <td style="border:1px solid #000;padding:6px;width:35%;">${esc(plan.company || "")}</td>
         <td style="border:1px solid #000;padding:6px;width:15%;background:#f0f0f0;">발행번호</td>
         <td style="border:1px solid #000;padding:6px;width:35%;">-</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">작업일자/시간</td>
-        <td style="border:1px solid #000;padding:6px;" colspan="3">${formatDateTimeDisplay(plan.workDate, plan.workTimeStart, plan.workTimeEnd)} (${plan.workType || ""})</td>
+        <td style="border:1px solid #000;padding:6px;" colspan="3">${esc(formatDateTimeDisplay(plan.workDate, plan.workTimeStart, plan.workTimeEnd))} (${esc(plan.workType || "")})</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">작업 장소/내용</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="2">${plan.workLocation || ""}</td>
-        <td style="border:1px solid #000;padding:6px;">${plan.workforceEquipment || ""}</td>
+        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="2">${esc(plan.workLocation || "")}</td>
+        <td style="border:1px solid #000;padding:6px;">${esc(plan.workforceEquipment || "")}</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">위험요인</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${plan.hazards || ""}</td>
+        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${esc(plan.hazards || "")}</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">저감대책</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${plan.mitigations || ""}</td>
+        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${esc(plan.mitigations || "")}</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">상주관리자</td>
-        <td style="border:1px solid #000;padding:6px;" colspan="3">협력업체: ${plan.vendorManagerName || ""} / 현대건설: ${plan.hyundaiManagerName || ""}</td>
+        <td style="border:1px solid #000;padding:6px;" colspan="3">협력업체: ${esc(plan.vendorManagerName || "")} / 현대건설: ${esc(plan.hyundaiManagerName || "")}</td>
       </tr>
     </table>
     <table style="width:100%;border-collapse:collapse;margin-top:6px;">
@@ -1497,13 +1533,13 @@ function planToTemplateHtml(plan) {
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;text-align:center;">작성 (협력업체)</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">${plan.writerName || ""}</td>
+        <td style="border:1px solid #000;padding:6px;text-align:center;">${esc(plan.writerName || "")}</td>
         <td style="border:1px solid #000;padding:6px;text-align:center;"></td>
         <td style="border:1px solid #000;padding:6px;text-align:center;">${plan.submittedAt ? plan.submittedAt.slice(0, 16).replace("T", " ") : ""}</td>
       </tr>
       <tr>
         <td style="border:1px solid #000;padding:6px;text-align:center;">승인 (현대건설)</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">${(plan.approval && plan.approval.approverName) || ""}</td>
+        <td style="border:1px solid #000;padding:6px;text-align:center;">${esc((plan.approval && plan.approval.approverName) || "")}</td>
         <td style="border:1px solid #000;padding:6px;text-align:center;" id="pdf-sig-cell"></td>
         <td style="border:1px solid #000;padding:6px;text-align:center;">${plan.approval ? plan.approval.approvedAt.slice(0, 16).replace("T", " ") : ""}</td>
       </tr>
