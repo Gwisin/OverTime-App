@@ -7,6 +7,7 @@ Notable application and Worker changes are recorded here. Worker versions descri
 ### Changed
 
 - Remove duplicated version-history headers from `index.html` and `worker/worker.js`; Git history and this changelog are the version record.
+- Remove the stale duplicate account-status test that referenced a retired versioned Worker source, restoring the documented Worker test command.
 
 ### Security
 
