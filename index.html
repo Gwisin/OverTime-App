@@ -85,6 +85,7 @@
   .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .badge.draft { background: #f2f4f6; color: #4e5968; }
   .badge.pending { background: #fff4e5; color: var(--warning); }
+  .badge.approving { background: #eaf2ff; color: var(--accent); }
   .badge.approved { background: #e8f6ee; color: var(--success); }
   .badge.rejected { background: #fdecea; color: var(--danger); }
   .badge.suspended { background: #f2f4f6; color: #4e5968; }
@@ -549,7 +550,7 @@ function planViewFilterOptionsHtml(companies) {
 
 // 홈 목록: 작업일자 최신순(같은 날짜면 작업 시작시간이 늦은 순) → 10개씩 보여주고 '더보기'로 10개씩 추가
 const PLAN_PAGE_SIZE = 10;
-const PLAN_BADGE_LABEL = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
+const PLAN_BADGE_LABEL = { draft: "작성중", pending: "검토중", approving: "승인중", approved: "승인완료", rejected: "반려" };
 function planStatusClass(status) {
   return Object.prototype.hasOwnProperty.call(PLAN_BADGE_LABEL, status) ? status : "";
 }
@@ -580,7 +581,7 @@ function planCardHtml(p) {
               <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${esc(p.company)}</span></div>
               <div class="meta-row wrap">
                 <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l3 3"/></svg><span>작성 ${esc(p.writerName || "-")}</span></span>
-                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>승인 ${esc(p.status === "approved" && p.approverName ? p.approverName : "현대건설 검토중")}</span></span>
+                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>수행팀 ${esc(p.executionReviewerName || "대기중")} · 안전팀 ${esc(p.safetyApproverName || (p.status === "approved" ? p.approverName : "") || "대기중")}</span></span>
               </div>
               <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 ${esc(vendorManagerName)} · 현대건설 ${esc(hyundaiManagerName)}</span></div>
             </div>
@@ -921,19 +922,21 @@ async function loadDetail(container, planId) {
     const data = await api("/api/plans/" + encodeURIComponent(planId));
     const plan = data.plan;
     state.currentPlan = plan;
-    const badgeLabel = { draft: "작성중", pending: "검토중", approved: "승인완료", rejected: "반려" };
+    const badgeLabel = PLAN_BADGE_LABEL;
     const statusClass = planStatusClass(plan.status);
     const statusLabel = badgeLabel[plan.status] || plan.status || "-";
-    const canApprove = state.user.org === "hyundai" && plan.status === "pending";
-    const canChangeHyundaiManager = state.user.org === "hyundai" && plan.status === "approved";
+    const isHyundaiApprovalState = ["pending", "approving"].includes(plan.status);
+    const canExecutionReview = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.executionReview;
+    const canSafetyApprove = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.safetyApproval;
+    const canChangeHyundaiManager = state.user.org === "hyundai" && ["pending", "approving", "approved"].includes(plan.status);
     const canManage = state.user.org === "hyundai" || plan.company === state.user.company; // 협력업체는 같은 업체 건만
     const canEdit = plan.status !== "approved" && canManage;
     const canSubmit = plan.status === "draft" && canManage;
     const canDelete =
       (plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai")) ||
-      (plan.status === "pending" && state.user.org === "hyundai");
+      (["pending", "approving"].includes(plan.status) && state.user.org === "hyundai");
     let hyundaiManagers = [];
-    if (canApprove || canChangeHyundaiManager) {
+    if (canChangeHyundaiManager) {
       try { hyundaiManagers = (await api("/api/managers?org=hyundai")).managers; } catch (e) {}
     }
 
@@ -945,9 +948,10 @@ async function loadDetail(container, planId) {
         </div>
         <p class="muted">${esc(plan.company)}</p>
         <div class="approval-step"><span class="step-label">요청</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
-        <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${esc(plan.status === "approved" && plan.approval ? plan.approval.approverName : "미승인")}</span><span class="step-status">${esc(plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중")}</span></div>
+        <div class="approval-step"><span class="step-label">수행팀</span><span class="step-name">${esc(plan.executionReview ? plan.executionReview.reviewerName : "미검토")}</span><span class="step-status">${esc(plan.executionReview ? "검토완료(" + formatDoneTime(plan.executionReview.reviewedAt) + ")" : "대기중")}</span></div>
+        <div class="approval-step"><span class="step-label">안전팀</span><span class="step-name">${esc(plan.safetyApproval ? plan.safetyApproval.approverName : (plan.status === "approved" && plan.approval ? plan.approval.approverName : "미승인"))}</span><span class="step-status">${esc(plan.safetyApproval ? "승인완료(" + formatDoneTime(plan.safetyApproval.approvedAt) + ")" : (plan.status === "approved" && plan.approval ? "승인완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중"))}</span></div>
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
-        ${canApprove || canChangeHyundaiManager ? `
+        ${canChangeHyundaiManager ? `
           <label>현대건설 상주관리자</label>
           <div class="manager-field">
             <select id="approveManager">
@@ -957,13 +961,17 @@ async function loadDetail(container, planId) {
             </select>
             <input id="approveManagerManual" class="manager-manual ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "" : "hidden"}" type="text" maxlength="100" value="${!plan.hyundaiManagerEmail ? esc(plan.hyundaiManagerName || "") : ""}" placeholder="현대건설 상주관리자 성명" />
           </div>` : ""}
-        <div class="row" style="margin-top:12px;">
+        ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:12px;">
+          ${canExecutionReview ? `<button id="detailExecutionReviewButton" class="primary">수행팀 검토</button>` : ""}
+          ${canSafetyApprove ? `<button id="detailSafetyApproveButton" class="primary">안전팀 승인</button>` : ""}
+        </div>` : ""}
+        <div class="row" style="margin-top:8px;">
           ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
           ${canSubmit ? `<button id="detailSubmitButton" class="primary">승인요청</button>` : ""}
-          ${canApprove ? `<button id="detailApproveButton" class="primary">승인</button>` : ""}
-          ${canChangeHyundaiManager ? `<button id="detailManagerButton" class="primary">상주관리자 변경</button>` : ""}
+          ${canChangeHyundaiManager ? `<button id="detailManagerButton">상주관리자 지정/변경</button>` : ""}
         </div>
-        ${canApprove ? `<button id="detailRejectButton" class="block" style="color:var(--danger);">반려</button>` : ""}
+        ${canExecutionReview ? `<button id="detailExecutionRejectButton" class="block" style="color:var(--danger);">수행팀 반려</button>` : ""}
+        ${canSafetyApprove ? `<button id="detailSafetyRejectButton" class="block" style="color:var(--danger);">안전팀 반려</button>` : ""}
         ${canDelete ? `<button id="detailDeleteButton" class="block" style="color:var(--danger);">삭제</button>` : ""}
       </div>
       <div class="card">
@@ -991,9 +999,11 @@ async function loadDetail(container, planId) {
       </div>`;
     container.querySelector("#detailEditButton")?.addEventListener("click", () => go("form", plan.id));
     container.querySelector("#detailSubmitButton")?.addEventListener("click", () => submitPlanFromDetail(plan.id));
-    container.querySelector("#detailApproveButton")?.addEventListener("click", () => approvePlan(plan.id));
+    container.querySelector("#detailExecutionReviewButton")?.addEventListener("click", () => completeApprovalStep(plan.id, "execution"));
+    container.querySelector("#detailSafetyApproveButton")?.addEventListener("click", () => completeApprovalStep(plan.id, "safety"));
     container.querySelector("#detailManagerButton")?.addEventListener("click", () => changeHyundaiManager(plan.id));
-    container.querySelector("#detailRejectButton")?.addEventListener("click", () => rejectPlan(plan.id));
+    container.querySelector("#detailExecutionRejectButton")?.addEventListener("click", () => rejectPlan(plan.id, "execution"));
+    container.querySelector("#detailSafetyRejectButton")?.addEventListener("click", () => rejectPlan(plan.id, "safety"));
     container.querySelector("#detailDeleteButton")?.addEventListener("click", () => deletePlan(plan.id));
     container.querySelector("#detailPdfButton")?.addEventListener("click", () => downloadPlan(plan.id, "pdf"));
     container.querySelector("#detailPngButton")?.addEventListener("click", () => downloadPlan(plan.id, "png"));
@@ -1027,17 +1037,13 @@ async function deletePlan(id) {
   }
 }
 
-async function approvePlan(id) {
+async function completeApprovalStep(id, stage) {
   try {
-    const sel = document.getElementById("approveManager");
-    const isManual = sel && sel.value === "__manual__";
-    const managerName = isManual
-      ? document.getElementById("approveManagerManual").value.trim()
-      : sel?.value ? sel.options[sel.selectedIndex]?.text || "" : "";
-    if (!sel || !managerName) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
-    if (!confirm("이 작업계획서를 승인하시겠습니까?")) return;
-    const body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
-    await api(`/api/plans/${encodeURIComponent(id)}/approve`, { method: "POST", body });
+    const isExecution = stage === "execution";
+    const label = isExecution ? "수행팀 검토" : "안전팀 승인";
+    if (!confirm(`${label}를 완료하시겠습니까?`)) return;
+    const action = isExecution ? "execution-review" : "safety-approve";
+    await api(`/api/plans/${encodeURIComponent(id)}/${action}`, { method: "POST" });
     go("detail", id);
   } catch (e) {
     alert(e.message);
@@ -1059,11 +1065,12 @@ async function changeHyundaiManager(id) {
     alert(e.message);
   }
 }
-async function rejectPlan(id) {
-  const reason = prompt("반려 사유를 입력해주세요.");
+async function rejectPlan(id, stage) {
+  const label = stage === "execution" ? "수행팀" : "안전팀";
+  const reason = prompt(`${label} 반려 사유를 입력해주세요.`);
   if (reason === null) return;
   try {
-    await api(`/api/plans/${encodeURIComponent(id)}/reject`, { method: "POST", body: { reason } });
+    await api(`/api/plans/${encodeURIComponent(id)}/reject`, { method: "POST", body: { reason, stage } });
     go("detail", id);
   } catch (e) {
     alert(e.message);
