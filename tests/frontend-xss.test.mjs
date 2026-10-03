@@ -144,6 +144,32 @@ test("pending detail uses in-progress labels and paired approval actions", async
   assert.doesNotMatch(container.innerHTML, /detail(?:Execution|Safety)RejectButton" class="block"/);
 });
 
+test("safety approval sends the selected Hyundai resident manager", async () => {
+  const requests = [];
+  const select = {
+    value: "manager@hyundai.com",
+    selectedIndex: 1,
+    options: [{ text: "선택" }, { text: "현대 현장소장" }],
+  };
+  const context = makeContext(async (url, init) => {
+    requests.push({ url, init });
+    return { ok: true, json: async () => ({ ok: true }) };
+  }, {
+    alert() {},
+    confirm: () => true,
+    document: { getElementById: (id) => id === "approveManager" ? select : null },
+  });
+
+  await context.completeApprovalStep("plan-1", "safety");
+
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /\/api\/plans\/plan-1\/safety-approve$/);
+  assert.deepEqual(JSON.parse(requests[0].init.body), {
+    hyundaiManagerEmail: "manager@hyundai.com",
+    hyundaiManagerName: "현대 현장소장",
+  });
+});
+
 test("edit form escapes stored plan and manager values", async () => {
   const formAttack = `</textarea><img src=x onerror="globalThis.xss=1">'`;
   const plan = {
