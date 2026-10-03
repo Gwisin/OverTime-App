@@ -255,6 +255,7 @@ test("printable plan uses equal page margins and a safe work-date filename", () 
   const rendered = context.printablePlanDocument(plan);
   assert.match(rendered, /<title>2026-10-03_야간_작업_협력_업체<\/title>/);
   assert.match(rendered, /@page \{ size:A4 portrait; margin:10mm; \}/);
+  assert.match(rendered, /print-color-adjust:exact !important/);
   assert.doesNotMatch(rendered, /html2canvas/);
 });
 

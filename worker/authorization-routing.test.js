@@ -34,7 +34,7 @@ function githubContent(value, sha = "sha") {
   return { sha, content: Buffer.from(JSON.stringify(value)).toString("base64") };
 }
 
-function mockExternalRequests({ email = "vendor@example.com", users = approvedUsers, files = {} } = {}) {
+function mockExternalRequests({ email = "vendor@example.com", users = approvedUsers, files = {}, rawFiles = {} } = {}) {
   const calls = [];
   const fetch = async (input, init = {}) => {
     const url = new URL(typeof input === "string" ? input : input.url);
@@ -53,6 +53,7 @@ function mockExternalRequests({ email = "vendor@example.com", users = approvedUs
         .join("/");
       if (method === "GET") {
         if (path === "users.json") return Response.json(githubContent(users, "users-sha"));
+        if (Object.hasOwn(rawFiles, path)) return new Response(rawFiles[path]);
         if (Object.hasOwn(files, path)) return Response.json(githubContent(files[path], `${path}-sha`));
         return new Response("not found", { status: 404 });
       }
@@ -92,6 +93,31 @@ test("protected APIs reject unauthenticated requests with 401", async () => {
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: "로그인이 필요합니다." });
     assert.equal(calls.length, 0);
+  });
+});
+
+test("plan signature API returns authenticated review and approval images", async () => {
+  const files = {
+    "data/plans/signed-plan.json": {
+      id: "signed-plan",
+      status: "approved",
+      executionReview: { signatureUrl: "signatures/reviewer.png" },
+      safetyApproval: { signatureUrl: "signatures/approver.jpg" },
+    },
+  };
+  const rawFiles = {
+    "signatures/reviewer.png": Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    "signatures/approver.jpg": Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  };
+  await withMockFetch({ files, rawFiles }, async () => {
+    const response = await request("/api/plans/signed-plan/signatures");
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      signatures: {
+        execution: "data:image/png;base64,iVBORw==",
+        safety: "data:image/jpeg;base64,/9j/4A==",
+      },
+    });
   });
 });
 
