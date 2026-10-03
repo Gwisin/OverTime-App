@@ -239,6 +239,23 @@ test("download template escapes resident manager and approval identities", () =>
 
   assert.doesNotMatch(rendered, /<img/i);
   assert.match(rendered, /&lt;img/);
+  assert.match(rendered, /<th>담당자<\/th>/);
+  assert.ok(rendered.indexOf(">협력업체<") < rendered.indexOf(">현대건설<"));
+});
+
+test("printable plan uses equal page margins and a safe work-date filename", () => {
+  const context = makeContext();
+  const plan = {
+    company: "협력/업체",
+    workDate: "2026-10-03",
+    workType: "야간:작업",
+  };
+
+  assert.equal(context.safePdfFileBase(plan), "2026-10-03_야간_작업_협력_업체");
+  const rendered = context.printablePlanDocument(plan);
+  assert.match(rendered, /<title>2026-10-03_야간_작업_협력_업체<\/title>/);
+  assert.match(rendered, /@page \{ size:A4 portrait; margin:10mm; \}/);
+  assert.doesNotMatch(rendered, /html2canvas/);
 });
 
 test("identity and registration views escape user and company values", () => {

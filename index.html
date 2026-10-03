@@ -1073,7 +1073,6 @@ async function loadDetail(container, planId) {
         </div>
       </div>
       <div class="card">
-        <h2>다운로드</h2>
         <button id="detailPdfButton" class="primary block">작업계획서 PDF 출력</button>
       </div>`;
     container.querySelector("#detailEditButton")?.addEventListener("click", () => go("form", plan.id));
@@ -1674,10 +1673,10 @@ function planToTemplateHtml(plan) {
     <div class="pdf-section-title">상주관리감독자</div>
     <table class="pdf-table pdf-supervisor">
       <colgroup><col style="width:25%"><col style="width:45%"><col style="width:30%"></colgroup>
-      <thead><tr><th>구분</th><th>직책/성명</th><th>연락처</th></tr></thead>
+      <thead><tr><th>구분</th><th>담당자</th><th>연락처</th></tr></thead>
       <tbody>
-        <tr><td class="pdf-label">현대건설</td><td>${pdfFit(plan.hyundaiManagerName)}</td><td>${pdfFit(plan.hyundaiManagerPhone)}</td></tr>
         <tr><td class="pdf-label">협력업체</td><td>${pdfFit(plan.vendorManagerName)}</td><td>${pdfFit(plan.vendorManagerPhone)}</td></tr>
+        <tr><td class="pdf-label">현대건설</td><td>${pdfFit(plan.hyundaiManagerName)}</td><td>${pdfFit(plan.hyundaiManagerPhone)}</td></tr>
       </tbody>
     </table>
     <div class="pdf-gap"></div>
@@ -1760,16 +1759,75 @@ function canvasToA4Pdf(canvas) {
   return pdf;
 }
 
+function safePdfFileBase(plan) {
+  const invalidFileNameChars = /[\\/:*?"<>|\u0000-\u001f]/g;
+  const cleanPart = (value, fallback) => String(value || fallback)
+    .replace(invalidFileNameChars, "_")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim() || fallback;
+  return [
+    cleanPart(plan.workDate, "날짜미정"),
+    cleanPart(plan.workType, "작업구분미정"),
+    cleanPart(plan.company, "협력업체미정")
+  ].join("_");
+}
+
+function printablePlanDocument(plan) {
+  const title = esc(safePdfFileBase(plan));
+  return `<!doctype html><html lang="ko"><head><meta charset="UTF-8"><title>${title}</title>
+    <style>
+      @page { size:A4 portrait; margin:10mm; }
+      html, body { margin:0; padding:0; background:#fff; }
+      body { color:#000; font-family:"Pretendard Variable", Pretendard, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+      .pdf-page { width:190mm !important; height:277mm !important; padding:0 !important; overflow:hidden; font-size:10.5pt !important; line-height:1.25 !important; }
+      .pdf-title { height:15mm !important; font-size:17pt !important; }
+      .pdf-section-title { height:12mm !important; font-size:14pt !important; }
+      .pdf-table th, .pdf-table td { padding:1.5mm 2.5mm !important; }
+      .pdf-table th, .pdf-label { font-size:12pt !important; }
+      .pdf-main .pdf-short { height:12mm !important; }
+      .pdf-main .pdf-work { height:45mm !important; }
+      .pdf-main .pdf-risk { height:47mm !important; }
+      .pdf-short .pdf-fit { height:8mm !important; }
+      .pdf-work .pdf-fit { height:41mm !important; }
+      .pdf-risk .pdf-fit { height:43mm !important; }
+      .pdf-gap { height:3mm !important; }
+      .pdf-supervisor thead tr { height:10mm !important; }
+      .pdf-supervisor tbody tr { height:11mm !important; }
+      .pdf-supervisor .pdf-fit { height:7mm !important; }
+      .pdf-approval thead tr { height:11mm !important; }
+      .pdf-approval tbody tr { height:13mm !important; }
+      .pdf-approval .pdf-fit { height:9mm !important; }
+      .pdf-signature img { max-height:10mm !important; }
+      @media screen { body { display:flex; justify-content:center; padding:10mm 0; background:#eee; } .pdf-page { box-shadow:0 2px 12px rgba(0,0,0,.18); } }
+      @media print { .pdf-page { box-shadow:none; } }
+    </style></head><body>${planToTemplateHtml(plan)}</body></html>`;
+}
+
+async function waitForPrintAssets(doc) {
+  if (doc.fonts && doc.fonts.ready) { try { await doc.fonts.ready; } catch (e) {} }
+  const images = Array.from(doc.images);
+  await Promise.all(images.map((img) => img.complete ? Promise.resolve() : new Promise((resolve) => {
+    img.addEventListener("load", resolve, { once: true });
+    img.addEventListener("error", resolve, { once: true });
+  })));
+}
+
 async function openPlanPdf(id) {
   const preview = window.open("", "_blank");
   if (!preview) return alert("PDF 미리보기 새 탭을 열 수 없습니다. 브라우저의 팝업 차단을 해제해주세요.");
   preview.document.write("<!doctype html><title>작업계획서 PDF 준비 중</title><p style='font-family:sans-serif;padding:24px'>작업계획서 PDF를 준비하고 있습니다...</p>");
   try {
     const data = await api("/api/plans/" + encodeURIComponent(id));
-    const canvas = await renderPlanToCanvas(data.plan);
-    const url = URL.createObjectURL(canvasToA4Pdf(canvas).output("blob"));
-    preview.location.replace(url);
-    setTimeout(() => URL.revokeObjectURL(url), 300000);
+    const plan = await withManagerContacts(data.plan);
+    preview.document.open();
+    preview.document.write(printablePlanDocument(plan));
+    preview.document.close();
+    await addPdfSignatures(preview.document);
+    await waitForPrintAssets(preview.document);
+    fitPdfText(preview.document);
+    preview.focus();
+    preview.print();
   } catch (e) {
     preview.close();
     alert(e.message);
