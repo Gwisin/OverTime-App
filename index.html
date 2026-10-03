@@ -185,13 +185,13 @@
     input, select, textarea, .date-label { font-size: 15px; }
   }
 
-  #pdf-template { position: absolute; left: -9999px; top: 0; width: 750px; background: #fff; }
+  #pdf-template { position: absolute; left: -9999px; top: 0; width: 794px; background: #fff; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 
-<!-- PDF/이미지 렌더링용 숨김 템플릿 -->
+<!-- PDF 렌더링용 숨김 템플릿 -->
 <div id="pdf-template"></div>
 
 <script>
@@ -1074,10 +1074,7 @@ async function loadDetail(container, planId) {
       </div>
       <div class="card">
         <h2>다운로드</h2>
-        <div class="row">
-          <button id="detailPdfButton">PDF</button>
-          <button id="detailPngButton">이미지</button>
-        </div>
+        <button id="detailPdfButton" class="primary block">작업계획서 PDF 출력</button>
       </div>`;
     container.querySelector("#detailEditButton")?.addEventListener("click", () => go("form", plan.id));
     container.querySelector("#detailSubmitButton")?.addEventListener("click", () => submitPlanFromDetail(plan.id));
@@ -1087,8 +1084,7 @@ async function loadDetail(container, planId) {
     container.querySelector("#detailExecutionRejectButton")?.addEventListener("click", () => rejectPlan(plan.id, "execution"));
     container.querySelector("#detailSafetyRejectButton")?.addEventListener("click", () => rejectPlan(plan.id, "safety"));
     container.querySelector("#detailDeleteButton")?.addEventListener("click", () => deletePlan(plan.id));
-    container.querySelector("#detailPdfButton")?.addEventListener("click", () => downloadPlan(plan.id, "pdf"));
-    container.querySelector("#detailPngButton")?.addEventListener("click", () => downloadPlan(plan.id, "png"));
+    container.querySelector("#detailPdfButton")?.addEventListener("click", () => openPlanPdf(plan.id));
     container.querySelector("#approveManager")?.addEventListener("change", (e) => {
       const manualInput = container.querySelector("#approveManagerManual");
       manualInput.classList.toggle("hidden", e.target.value !== "__manual__");
@@ -1201,12 +1197,12 @@ function renderMyPage() {
       ${state.user.signatureUrl ? `<p class="muted">현재 등록된 서명이 있습니다.</p>` : `<p class="muted">등록된 서명이 없습니다. 승인 기능을 사용하려면 서명을 등록해주세요.</p>`}
     </div>
     <div class="card">
-      <h2>기간별 일괄 다운로드</h2>
+      <h2>작업계획서 일괄 출력(ZIP)</h2>
       <div class="row">
         <input type="date" id="batchFrom" />
         <input type="date" id="batchTo" />
       </div>
-      <button class="block" onclick="batchDownload()">ZIP으로 다운로드</button>
+      <button class="block" onclick="batchDownload()">작업계획서 일괄 출력(ZIP)</button>
     </div>`;
   setTimeout(setupSignaturePad, 0);
   setTimeout(loadMySignature, 0);
@@ -1609,79 +1605,144 @@ async function deleteUser(i) {
 }
 
 /* =========================================================
-   8. PDF / 이미지 다운로드 (원본 양식 재현)
+   8. A4 작업계획서 PDF 출력
    ========================================================= */
+const PDF_SITE_NAME = "밀레니엄 힐튼부지 개발사업";
+
+function pdfDateTime(value) {
+  return value ? value.slice(0, 16).replace(/-/g, ".").replace("T", ", ") : "";
+}
+
+function pdfFit(value) {
+  return `<div class="pdf-fit">${esc(value || "")}</div>`;
+}
+
+function approvalSignatureCell(approval, key) {
+  const signatureUrl = approval && approval.signatureUrl ? ` data-signature="${esc(approval.signatureUrl)}"` : "";
+  return `<td class="pdf-signature" id="pdf-signature-${key}"${signatureUrl}></td>`;
+}
+
 function planToTemplateHtml(plan) {
+  const execution = plan.executionReview || {};
+  const safety = plan.safetyApproval || (plan.status === "approved" ? plan.approval || {} : {});
   return `
-  <div style="font-family:var(--font);border:2px solid #000;padding:0;font-size:13px;color:#000;">
-    <div style="text-align:center;font-weight:bold;font-size:18px;padding:10px;border-bottom:2px solid #000;">
-      보충작업(휴일/조출/점심/야간/기상특보) 작업계획서
-    </div>
-    <table style="width:100%;border-collapse:collapse;">
-      <tr>
-        <td style="border:1px solid #000;padding:6px;width:15%;background:#f0f0f0;">업 체 명</td>
-        <td style="border:1px solid #000;padding:6px;width:35%;">${esc(plan.company || "")}</td>
-        <td style="border:1px solid #000;padding:6px;width:15%;background:#f0f0f0;">발행번호</td>
-        <td style="border:1px solid #000;padding:6px;width:35%;">-</td>
+  <div class="pdf-page">
+    <style>
+      .pdf-page { width:794px; height:1123px; padding:15px; overflow:hidden; background:#fff; color:#000; font-family:var(--font); font-size:16px; line-height:1.35; }
+      .pdf-page * { box-sizing:border-box; }
+      .pdf-title, .pdf-section-title { display:flex; align-items:center; justify-content:center; border:1.5px solid #444; background:#d5d5d5; font-weight:800; text-align:center; }
+      .pdf-title { height:66px; font-size:24px; }
+      .pdf-section-title { height:56px; font-size:21px; }
+      .pdf-table { width:100%; border-collapse:collapse; table-layout:fixed; }
+      .pdf-table th, .pdf-table td { border:1.5px solid #444; padding:8px 12px; vertical-align:middle; overflow:hidden; }
+      .pdf-table th { background:#d5d5d5; font-size:18px; font-weight:800; text-align:center; }
+      .pdf-main .pdf-short { height:58px; }
+      .pdf-main .pdf-work { height:218px; }
+      .pdf-main .pdf-risk { height:224px; }
+      .pdf-label { background:#d5d5d5; font-size:18px; font-weight:800; text-align:center; }
+      .pdf-fit { width:100%; height:100%; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; display:flex; align-items:center; }
+      .pdf-short .pdf-fit { height:38px; }
+      .pdf-work .pdf-fit { height:198px; }
+      .pdf-risk .pdf-fit { height:204px; }
+      .pdf-gap { height:12px; }
+      .pdf-supervisor thead tr { height:50px; }
+      .pdf-supervisor tbody tr { height:54px; }
+      .pdf-supervisor td { text-align:center; }
+      .pdf-supervisor .pdf-fit { height:34px; justify-content:center; }
+      .pdf-approval thead tr { height:54px; }
+      .pdf-approval tbody tr { height:58px; }
+      .pdf-approval td { text-align:center; }
+      .pdf-approval .pdf-fit { height:38px; justify-content:center; }
+      .pdf-signature { padding:3px !important; }
+      .pdf-signature img { display:block; max-width:100%; max-height:48px; margin:auto; object-fit:contain; }
+    </style>
+    <div class="pdf-title">보충작업계획서(${esc(plan.workType || "")})</div>
+    <table class="pdf-table pdf-main">
+      <colgroup><col style="width:15%"><col style="width:35%"><col style="width:15%"><col style="width:35%"></colgroup>
+      <tr class="pdf-short"><td class="pdf-label">현장</td><td>${pdfFit(PDF_SITE_NAME)}</td><td class="pdf-label">업체명</td><td>${pdfFit(plan.company)}</td></tr>
+      <tr class="pdf-short"><td class="pdf-label">작업일자</td><td>${pdfFit(formatDateLabel(plan.workDate))}</td><td class="pdf-label">작업시간</td><td>${pdfFit(plan.workTimeStart && plan.workTimeEnd ? `${plan.workTimeStart}~${plan.workTimeEnd}` : "")}</td></tr>
+      <tr class="pdf-work">
+        <td class="pdf-label">작업<br>장소/내용</td><td>${pdfFit(plan.workLocation)}</td>
+        <td class="pdf-label">작업<br>인원/장비</td><td>${pdfFit(plan.workforceEquipment)}</td>
       </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">작업일자/시간</td>
-        <td style="border:1px solid #000;padding:6px;" colspan="3">${esc(formatDateTimeDisplay(plan.workDate, plan.workTimeStart, plan.workTimeEnd))} (${esc(plan.workType || "")})</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">작업 장소/내용</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="2">${esc(plan.workLocation || "")}</td>
-        <td style="border:1px solid #000;padding:6px;">${esc(plan.workforceEquipment || "")}</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">위험요인</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${esc(plan.hazards || "")}</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">저감대책</td>
-        <td style="border:1px solid #000;padding:6px;white-space:pre-wrap;" colspan="3">${esc(plan.mitigations || "")}</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;background:#f0f0f0;">상주관리자</td>
-        <td style="border:1px solid #000;padding:6px;" colspan="3">협력업체: ${esc(plan.vendorManagerName || "")} / 현대건설: ${esc(plan.hyundaiManagerName || "")}</td>
+      <tr class="pdf-risk">
+        <td class="pdf-label">위험요인</td><td>${pdfFit(plan.hazards)}</td>
+        <td class="pdf-label">저감대책</td><td>${pdfFit(plan.mitigations)}</td>
       </tr>
     </table>
-    <table style="width:100%;border-collapse:collapse;margin-top:6px;">
-      <tr style="background:#f0f0f0;">
-        <td style="border:1px solid #000;padding:6px;text-align:center;">구분</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">성명</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">날인</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">시간</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">작성 (협력업체)</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">${esc(plan.writerName || "")}</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;"></td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">${plan.submittedAt ? plan.submittedAt.slice(0, 16).replace("T", " ") : ""}</td>
-      </tr>
-      <tr>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">승인 (현대건설)</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">${esc((plan.approval && plan.approval.approverName) || "")}</td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;" id="pdf-sig-cell"></td>
-        <td style="border:1px solid #000;padding:6px;text-align:center;">${plan.approval ? plan.approval.approvedAt.slice(0, 16).replace("T", " ") : ""}</td>
-      </tr>
+    <div class="pdf-gap"></div>
+    <div class="pdf-section-title">상주관리감독자</div>
+    <table class="pdf-table pdf-supervisor">
+      <colgroup><col style="width:25%"><col style="width:45%"><col style="width:30%"></colgroup>
+      <thead><tr><th>구분</th><th>직책/성명</th><th>연락처</th></tr></thead>
+      <tbody>
+        <tr><td class="pdf-label">현대건설</td><td>${pdfFit(plan.hyundaiManagerName)}</td><td>${pdfFit(plan.hyundaiManagerPhone)}</td></tr>
+        <tr><td class="pdf-label">협력업체</td><td>${pdfFit(plan.vendorManagerName)}</td><td>${pdfFit(plan.vendorManagerPhone)}</td></tr>
+      </tbody>
+    </table>
+    <div class="pdf-gap"></div>
+    <table class="pdf-table pdf-approval">
+      <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
+      <thead><tr><th colspan="2">작업요청/승인</th><th>서명</th><th>결재시간</th></tr></thead>
+      <tbody>
+        <tr><td class="pdf-label">작성/요청<br>(협력업체)</td><td>${pdfFit(plan.writerName)}</td><td></td><td>${pdfFit(pdfDateTime(plan.submittedAt))}</td></tr>
+        <tr><td class="pdf-label">검토<br>(현대건설 수행팀)</td><td>${pdfFit(execution.reviewerName)}</td>${approvalSignatureCell(execution, "execution")}<td>${pdfFit(pdfDateTime(execution.reviewedAt))}</td></tr>
+        <tr><td class="pdf-label">승인<br>(현대건설 안전팀)</td><td>${pdfFit(safety.approverName)}</td>${approvalSignatureCell(safety, "safety")}<td>${pdfFit(pdfDateTime(safety.approvedAt))}</td></tr>
+      </tbody>
     </table>
   </div>`;
 }
 
+async function addPdfSignatures(container) {
+  const cells = Array.from(container.querySelectorAll("[data-signature]"));
+  await Promise.all(cells.map(async (cell) => {
+    try {
+      const imgUrl = await getSignatureImageUrl(cell.dataset.signature);
+      if (!imgUrl) return;
+      const img = document.createElement("img");
+      img.crossOrigin = "anonymous";
+      img.src = imgUrl;
+      await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
+      if (img.complete && img.naturalWidth) cell.appendChild(img);
+    } catch (e) {}
+  }));
+}
+
+function fitPdfText(container) {
+  container.querySelectorAll(".pdf-fit").forEach((element) => {
+    let size = 16;
+    while ((element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth) && size > 9) {
+      size -= 1;
+      element.style.fontSize = `${size}px`;
+      element.style.lineHeight = "1.25";
+    }
+  });
+}
+
+async function withManagerContacts(plan) {
+  const result = { ...plan, vendorManagerPhone: "", hyundaiManagerPhone: "" };
+  const lookups = [];
+  if (plan.vendorManagerEmail) {
+    lookups.push(api(`/api/managers?org=vendor&company=${encodeURIComponent(plan.company || "")}`)
+      .then(({ managers }) => { result.vendorManagerPhone = managers.find((m) => m.email === plan.vendorManagerEmail)?.phone || ""; })
+      .catch(() => {}));
+  }
+  if (plan.hyundaiManagerEmail) {
+    lookups.push(api("/api/managers?org=hyundai")
+      .then(({ managers }) => { result.hyundaiManagerPhone = managers.find((m) => m.email === plan.hyundaiManagerEmail)?.phone || ""; })
+      .catch(() => {}));
+  }
+  await Promise.all(lookups);
+  return result;
+}
+
 async function renderPlanToCanvas(plan) {
   const container = document.getElementById("pdf-template");
-  container.innerHTML = planToTemplateHtml(plan);
-  if (plan.approval && plan.approval.signatureUrl) {
-    try {
-      const imgUrl = await getSignatureImageUrl(plan.approval.signatureUrl);
-      const cell = document.getElementById("pdf-sig-cell");
-      if (cell && imgUrl) cell.innerHTML = `<img src="${imgUrl}" style="height:30px;" crossorigin="anonymous" />`;
-    } catch (e) {}
-  }
-  await new Promise((r) => setTimeout(r, 50));
+  container.innerHTML = planToTemplateHtml(await withManagerContacts(plan));
+  await addPdfSignatures(container);
   if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
-  const canvas = await html2canvas(container, { scale: 2, useCORS: true });
+  fitPdfText(container);
+  const canvas = await html2canvas(container.firstElementChild, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
   container.innerHTML = "";
   return canvas;
 }
@@ -1693,21 +1754,24 @@ async function getSignatureImageUrl(path) {
 }
 const WORKER_REPO_HINT = "Gwisin/OverTime/main"; // README 참고하여 실제 값으로 교체
 
-async function downloadPlan(id, type) {
+function canvasToA4Pdf(canvas) {
+  const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+  pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", 0, 0, 210, 297, undefined, "FAST");
+  return pdf;
+}
+
+async function openPlanPdf(id) {
+  const preview = window.open("", "_blank");
+  if (!preview) return alert("PDF 미리보기 새 탭을 열 수 없습니다. 브라우저의 팝업 차단을 해제해주세요.");
+  preview.document.write("<!doctype html><title>작업계획서 PDF 준비 중</title><p style='font-family:sans-serif;padding:24px'>작업계획서 PDF를 준비하고 있습니다...</p>");
   try {
     const data = await api("/api/plans/" + encodeURIComponent(id));
     const canvas = await renderPlanToCanvas(data.plan);
-    if (type === "png") {
-      const link = document.createElement("a");
-      link.download = `${id}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } else {
-      const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "px", format: [canvas.width / 2, canvas.height / 2] });
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, canvas.width / 2, canvas.height / 2);
-      pdf.save(`${id}.pdf`);
-    }
+    const url = URL.createObjectURL(canvasToA4Pdf(canvas).output("blob"));
+    preview.location.replace(url);
+    setTimeout(() => URL.revokeObjectURL(url), 300000);
   } catch (e) {
+    preview.close();
     alert(e.message);
   }
 }
@@ -1723,8 +1787,7 @@ async function batchDownload() {
     for (const p of data.plans) {
       const detail = await api("/api/plans/" + encodeURIComponent(p.id));
       const canvas = await renderPlanToCanvas(detail.plan);
-      const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "px", format: [canvas.width / 2, canvas.height / 2] });
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, canvas.width / 2, canvas.height / 2);
+      const pdf = canvasToA4Pdf(canvas);
       zip.file(`${p.id}.pdf`, pdf.output("blob"));
     }
     const blob = await zip.generateAsync({ type: "blob" });

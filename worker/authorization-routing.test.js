@@ -14,11 +14,21 @@ const env = {
 };
 
 const approvedUsers = {
-  "vendor@example.com": { name: "Vendor", company: "협력사", org: "vendor", status: "approved" },
+  "vendor@example.com": { name: "Vendor", company: "협력사", org: "vendor", phone: "010-1234-5678", status: "approved" },
   "other@example.com": { name: "Other", company: "다른협력사", org: "vendor", status: "approved" },
   "hyundai@example.com": { name: "Hyundai", company: "현대건설(주)", org: "hyundai", status: "approved", signatureUrl: "signatures/hyundai.png" },
   "admin@example.com": { name: "Admin", company: "협력사", org: "vendor", status: "approved", signatureUrl: "signatures/admin.png" },
 };
+
+test("manager lookup includes the registered phone number", async () => {
+  await withMockFetch({}, async () => {
+    const response = await request("/api/managers?org=vendor&company=" + encodeURIComponent("협력사"));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      managers: [{ email: "vendor@example.com", name: "Vendor", company: "협력사", phone: "010-1234-5678" }],
+    });
+  });
+});
 
 function githubContent(value, sha = "sha") {
   return { sha, content: Buffer.from(JSON.stringify(value)).toString("base64") };
