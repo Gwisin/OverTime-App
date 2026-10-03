@@ -950,8 +950,8 @@ async function loadDetail(container, planId) {
         </div>
         <p class="muted">${esc(plan.company)}</p>
         <div class="approval-step"><span class="step-label">요청</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
-        <div class="approval-step"><span class="step-label">수행팀</span><span class="step-name">${esc(plan.executionReview ? plan.executionReview.reviewerName : "미검토")}</span><span class="step-status">${esc(plan.executionReview ? "검토완료(" + formatDoneTime(plan.executionReview.reviewedAt) + ")" : "대기중")}</span></div>
-        <div class="approval-step"><span class="step-label">안전팀</span><span class="step-name">${esc(plan.safetyApproval ? plan.safetyApproval.approverName : (plan.status === "approved" && plan.approval ? plan.approval.approverName : "미승인"))}</span><span class="step-status">${esc(plan.safetyApproval ? "승인완료(" + formatDoneTime(plan.safetyApproval.approvedAt) + ")" : (plan.status === "approved" && plan.approval ? "승인완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중"))}</span></div>
+        <div class="approval-step"><span class="step-label">수행팀</span><span class="step-name">${esc(plan.executionReview ? plan.executionReview.reviewerName : "")}</span><span class="step-status">${esc(plan.executionReview ? "검토완료(" + formatDoneTime(plan.executionReview.reviewedAt) + ")" : "검토중")}</span></div>
+        <div class="approval-step"><span class="step-label">안전팀</span><span class="step-name">${esc(plan.safetyApproval ? plan.safetyApproval.approverName : (plan.status === "approved" && plan.approval ? plan.approval.approverName : ""))}</span><span class="step-status">${esc(plan.safetyApproval ? "승인완료(" + formatDoneTime(plan.safetyApproval.approvedAt) + ")" : (plan.status === "approved" && plan.approval ? "승인완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "승인중"))}</span></div>
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
         ${canChangeHyundaiManager ? `
           <label>현대건설 상주관리자</label>
@@ -967,13 +967,15 @@ async function loadDetail(container, planId) {
           ${canExecutionReview ? `<button id="detailExecutionReviewButton" class="primary">수행팀 검토</button>` : ""}
           ${canSafetyApprove ? `<button id="detailSafetyApproveButton" class="primary">안전팀 승인</button>` : ""}
         </div>` : ""}
+        ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:8px;">
+          ${canExecutionReview ? `<button id="detailExecutionRejectButton" style="color:var(--danger);">수행팀 반려</button>` : ""}
+          ${canSafetyApprove ? `<button id="detailSafetyRejectButton" style="color:var(--danger);">안전팀 반려</button>` : ""}
+        </div>` : ""}
         <div class="row" style="margin-top:8px;">
           ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
           ${canSubmit ? `<button id="detailSubmitButton" class="primary">승인요청</button>` : ""}
           ${canChangeHyundaiManager ? `<button id="detailManagerButton">상주관리자 지정/변경</button>` : ""}
         </div>
-        ${canExecutionReview ? `<button id="detailExecutionRejectButton" class="block" style="color:var(--danger);">수행팀 반려</button>` : ""}
-        ${canSafetyApprove ? `<button id="detailSafetyRejectButton" class="block" style="color:var(--danger);">안전팀 반려</button>` : ""}
         ${canDelete ? `<button id="detailDeleteButton" class="block" style="color:var(--danger);">삭제</button>` : ""}
       </div>
       <div class="card">
