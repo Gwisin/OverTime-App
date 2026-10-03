@@ -964,8 +964,8 @@ async function loadDetail(container, planId) {
             <input id="approveManagerManual" class="manager-manual ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "" : "hidden"}" type="text" maxlength="100" value="${!plan.hyundaiManagerEmail ? esc(plan.hyundaiManagerName || "") : ""}" placeholder="현대건설 상주관리자 성명" />
           </div>` : ""}
         ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:12px;">
-          ${canExecutionReview ? `<button id="detailExecutionReviewButton" class="primary">수행팀 검토</button>` : ""}
-          ${canSafetyApprove ? `<button id="detailSafetyApproveButton" class="primary">안전팀 승인</button>` : ""}
+          ${canExecutionReview ? `<button id="detailExecutionReviewButton" class="primary">수행팀 결재</button>` : ""}
+          ${canSafetyApprove ? `<button id="detailSafetyApproveButton" class="primary">안전팀 결재</button>` : ""}
         </div>` : ""}
         ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:8px;">
           ${canExecutionReview ? `<button id="detailExecutionRejectButton" style="color:var(--danger);">수행팀 반려</button>` : ""}
