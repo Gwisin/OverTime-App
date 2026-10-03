@@ -112,7 +112,7 @@
   .plan-item .row button { height: 40px; }
 
   .approval-step { display: flex; align-items: baseline; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
-  .approval-step .step-label { flex: 0 0 32px; font-weight: 600; }
+  .approval-step .step-label { flex: 0 0 52px; font-weight: 600; white-space: nowrap; }
   .approval-step .step-name { flex: 1 1 auto; min-width: 0; }
   .approval-step .step-status { margin-left: auto; text-align: right; white-space: nowrap; color: var(--sub); }
   .approval-step:last-child { border-bottom: none; }
@@ -568,6 +568,8 @@ function planCardHtml(p) {
   const statusLabel = badgeLabel[p.status] || p.status || "-";
   const vendorManagerName = cleanName(p.vendorManagerName) || "-";
   const hyundaiManagerName = cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중";
+  const executionReviewSummary = p.executionReviewerName ? `검토 ${p.executionReviewerName}` : "검토중";
+  const safetyApprovalSummary = p.safetyApproverName || (p.status === "approved" ? p.approverName : "");
   return `
           <div class="plan-item" data-plan-id="${esc(p.id)}">
             <div class="top">
@@ -581,7 +583,7 @@ function planCardHtml(p) {
               <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${esc(p.company)}</span></div>
               <div class="meta-row wrap">
                 <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l3 3"/></svg><span>작성 ${esc(p.writerName || "-")}</span></span>
-                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>수행팀 ${esc(p.executionReviewerName || "대기중")} · 안전팀 ${esc(p.safetyApproverName || (p.status === "approved" ? p.approverName : "") || "대기중")}</span></span>
+                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>${esc(executionReviewSummary)} · ${esc(safetyApprovalSummary ? `승인 ${safetyApprovalSummary}` : "승인중")}</span></span>
               </div>
               <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 ${esc(vendorManagerName)} · 현대건설 ${esc(hyundaiManagerName)}</span></div>
             </div>

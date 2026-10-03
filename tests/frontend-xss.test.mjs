@@ -51,6 +51,31 @@ test("home plan cards escape data and do not build inline handlers", () => {
   assert.equal(context.planStatusClass(attack), "");
 });
 
+test("home plan cards use review and approval wording", () => {
+  const context = makeContext();
+  const basePlan = {
+    id: "plan-1",
+    workDate: "2026-10-24",
+    workType: "야간",
+    status: "pending",
+    company: "테스트 업체",
+    writerName: "작성자",
+  };
+
+  const pendingCard = context.planCardHtml(basePlan);
+  assert.match(pendingCard, /검토중 · 승인중/);
+  assert.doesNotMatch(pendingCard, /수행팀 대기중|안전팀 대기중/);
+
+  const approvedCard = context.planCardHtml({
+    ...basePlan,
+    status: "approved",
+    executionReviewerName: "검토자",
+    safetyApproverName: "승인자",
+  });
+  assert.match(approvedCard, /검토 검토자 · 승인 승인자/);
+  assert.doesNotMatch(approvedCard, /수행팀 검토자|안전팀 승인자/);
+});
+
 test("company filter options escape values and labels", () => {
   const context = makeContext();
   context.__setStateUser({ org: "vendor", isAdmin: false });
