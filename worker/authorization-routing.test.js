@@ -312,6 +312,68 @@ test("approval keeps a manual Hyundai manager separate from the signed-in approv
   });
 });
 
+test("only Hyundai can change the resident manager on an approved plan without altering approval data", async () => {
+  const approval = {
+    approverEmail: "hyundai@example.com",
+    approverName: "Hyundai",
+    signatureUrl: "signatures/hyundai.png",
+    approvedAt: "2026-10-03T01:00:00.000Z",
+  };
+  const approvedPlan = {
+    id: "approved-plan",
+    company: "협력사",
+    status: "approved",
+    workLocation: "기존 작업내용",
+    writerEmail: "vendor@example.com",
+    hyundaiManagerEmail: "old@hyundai.com",
+    hyundaiManagerName: "기존 관리자",
+    approval,
+  };
+  const files = {
+    "data/plans/approved-plan.json": approvedPlan,
+    "data/plans/draft-plan.json": { ...approvedPlan, id: "draft-plan", status: "draft" },
+    "data/index.json": [{ id: "approved-plan", status: "approved", hyundaiManagerName: "기존 관리자" }],
+  };
+
+  await withMockFetch({ files }, async (calls) => {
+    const response = await request("/api/plans/approved-plan/hyundai-manager", {
+      method: "POST",
+      body: { hyundaiManagerEmail: "new@hyundai.com", hyundaiManagerName: "새 관리자" },
+    });
+    assert.equal(response.status, 403);
+    assert.equal(calls.some(({ method }) => method === "PUT"), false);
+  });
+
+  await withMockFetch({ email: "hyundai@example.com", files }, async (calls) => {
+    const wrongStatus = await request("/api/plans/draft-plan/hyundai-manager", {
+      method: "POST",
+      body: { hyundaiManagerEmail: "new@hyundai.com", hyundaiManagerName: "새 관리자" },
+    });
+    assert.equal(wrongStatus.status, 400);
+
+    const response = await request("/api/plans/approved-plan/hyundai-manager", {
+      method: "POST",
+      body: { hyundaiManagerEmail: "NEW@HYUNDAI.COM", hyundaiManagerName: "  새 관리자  " },
+    });
+    assert.equal(response.status, 200);
+
+    const planPut = calls.find(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/plans/approved-plan.json"));
+    const planPayload = JSON.parse(planPut.body);
+    const savedPlan = JSON.parse(Buffer.from(planPayload.content, "base64").toString());
+    assert.equal(savedPlan.hyundaiManagerEmail, "new@hyundai.com");
+    assert.equal(savedPlan.hyundaiManagerName, "새 관리자");
+    assert.equal(savedPlan.status, "approved");
+    assert.equal(savedPlan.workLocation, "기존 작업내용");
+    assert.deepEqual(savedPlan.approval, approval);
+
+    const indexPut = calls.find(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/index.json"));
+    const indexPayload = JSON.parse(indexPut.body);
+    const savedIndex = JSON.parse(Buffer.from(indexPayload.content, "base64").toString());
+    assert.equal(savedIndex[0].hyundaiManagerName, "새 관리자");
+    assert.equal(savedIndex[0].status, "approved");
+  });
+});
+
 test("plan routes reject path traversal and control-character IDs before GitHub plan access", async () => {
   const unsafeIds = ["%2Fetc", "%5Cetc", "%00etc", "a".repeat(201)];
   for (const id of unsafeIds) {

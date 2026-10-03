@@ -868,6 +868,44 @@ async function handleRejectPlan(request, env, id, currentUser) {
   return json({ ok: true }, 200, env);
 }
 
+async function handleChangeHyundaiManager(request, env, id, currentUser) {
+  if (currentUser.org !== "hyundai") {
+    return json({ error: "현대건설 소속만 상주관리자를 변경할 수 있습니다." }, 403, env);
+  }
+  const planFile = await ghGetJson(env, `data/plans/${id}.json`);
+  if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
+  if (planFile.json.status !== "approved") {
+    return json({ error: "승인완료된 작업계획서만 상주관리자를 변경할 수 있습니다." }, 400, env);
+  }
+  const body = await request.json().catch(() => ({}));
+  const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
+  if (!hyundaiManagerName) {
+    return json({ error: "현대건설 상주관리자를 선택하거나 직접 입력해주세요." }, 400, env);
+  }
+  const now = new Date().toISOString();
+  const plan = {
+    ...planFile.json,
+    hyundaiManagerEmail: normalizeManagerEmail(body.hyundaiManagerEmail),
+    hyundaiManagerName,
+    updatedAt: now,
+  };
+  await ghPutJson(env, `data/plans/${id}.json`, plan, planFile.sha, `현대건설 상주관리자 변경: ${id}`);
+  await updateJsonWithRetry(
+    env,
+    "data/index.json",
+    (list) => {
+      const idx = list.findIndex((p) => p.id === id);
+      if (idx >= 0) {
+        list[idx].hyundaiManagerName = hyundaiManagerName;
+        list[idx].updatedAt = now;
+      }
+      return list;
+    },
+    `목록 현대건설 상주관리자 변경: ${id}`
+  );
+  return json({ ok: true }, 200, env);
+}
+
 async function updatePlanStatus(env, id, status, mutatorFn) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) throw Object.assign(new Error("작업계획서를 찾을 수 없습니다."), { status: 404 });
@@ -981,7 +1019,7 @@ export default {
       if (path === "/api/plans" && request.method === "GET") return await handleListPlans(request, env, url, currentUser);
       if (path === "/api/plans" && request.method === "POST") return await handleSavePlan(request, env, currentUser);
 
-      const planIdMatch = path.match(/^\/api\/plans\/([^/]+)(\/(submit|approve|reject))?$/);
+      const planIdMatch = path.match(/^\/api\/plans\/([^/]+)(\/(submit|approve|reject|hyundai-manager))?$/);
       if (planIdMatch) {
         const id = decodeURIComponent(planIdMatch[1]);
         const action = planIdMatch[3];
@@ -991,6 +1029,7 @@ export default {
         if (request.method === "POST" && action === "submit") return await handleSubmitPlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "approve") return await handleApprovePlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "reject") return await handleRejectPlan(request, env, id, currentUser);
+        if (request.method === "POST" && action === "hyundai-manager") return await handleChangeHyundaiManager(request, env, id, currentUser);
       }
 
       return json({ error: "찾을 수 없는 요청입니다." }, 404, env);
