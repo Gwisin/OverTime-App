@@ -684,7 +684,7 @@ async function loadForm(container, planId) {
       </div>
       <label>작업구분</label>
       <select id="f_workType">
-        ${["조출", "점심", "야간", "주말", "기상특보"].map((t) => `<option ${plan.workType === t ? "selected" : ""}>${t}</option>`).join("")}
+        ${["조출", "점심", "야간", "휴일", "기상특보"].map((t) => `<option ${plan.workType === t ? "selected" : ""}>${t}</option>`).join("")}
       </select>
       <label>작업일자</label>
       <div class="date-wrap">
@@ -707,7 +707,7 @@ async function loadForm(container, planId) {
       <label>작업장소/내용</label>
       <textarea id="f_workLocation">${esc(plan.workLocation || "")}</textarea>
       <label>작업 인원/장비</label>
-      <input id="f_workforceEquipment" type="text" value="${esc(plan.workforceEquipment || "")}" placeholder="8명(관리자 2, 유도원 3, 06W 2)" />
+      <textarea id="f_workforceEquipment" rows="2" placeholder="8명(관리자 4, 유도원 3, 06W 1대)&#10;OOO 소장, OOO 과장, OOO 대리, OOO 사원">${esc(plan.workforceEquipment || "")}</textarea>
       <label>위험요인</label>
       <textarea id="f_hazards">${esc(plan.hazards || "")}</textarea>
       <label>저감대책</label>
@@ -768,7 +768,8 @@ async function loadForm(container, planId) {
   const applyWorkTypeDefaults = () => {
     const type = document.getElementById("f_workType").value;
     if (type === "점심") setTimeSelects("11:30", "13:00");
-    else if (type === "주말") setTimeSelects("07:00", "17:30");
+    else if (type === "야간") setTimeSelects("17:00", "18:00");
+    else if (type === "휴일") setTimeSelects("07:00", "17:30");
     else if (type === "조출") {
       const company = document.getElementById("f_company").value;
       setTimeSelects(latestJochulStart(plansSummary, company) || "06:00", "07:00");
@@ -899,7 +900,7 @@ async function loadYesterday() {
     document.getElementById("f_hazards").value = p.hazards || "";
     document.getElementById("f_mitigations").value = p.mitigations || "";
     const type = document.getElementById("f_workType").value;
-    if (!["점심", "조출", "주말"].includes(type)) setTimeSelects(p.workTimeStart, p.workTimeEnd);
+    if (!["점심", "조출", "야간", "휴일"].includes(type)) setTimeSelects(p.workTimeStart, p.workTimeEnd);
   } catch (e) {
     alert(e.message);
   }
@@ -924,6 +925,7 @@ async function loadDetail(container, planId) {
     const statusClass = planStatusClass(plan.status);
     const statusLabel = badgeLabel[plan.status] || plan.status || "-";
     const canApprove = state.user.org === "hyundai" && plan.status === "pending";
+    const canChangeHyundaiManager = state.user.org === "hyundai" && plan.status === "approved";
     const canManage = state.user.org === "hyundai" || plan.company === state.user.company; // 협력업체는 같은 업체 건만
     const canEdit = plan.status !== "approved" && canManage;
     const canSubmit = plan.status === "draft" && canManage;
@@ -931,7 +933,7 @@ async function loadDetail(container, planId) {
       (plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai")) ||
       (plan.status === "pending" && state.user.org === "hyundai");
     let hyundaiManagers = [];
-    if (canApprove) {
+    if (canApprove || canChangeHyundaiManager) {
       try { hyundaiManagers = (await api("/api/managers?org=hyundai")).managers; } catch (e) {}
     }
 
@@ -945,7 +947,7 @@ async function loadDetail(container, planId) {
         <div class="approval-step"><span class="step-label">요청</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
         <div class="approval-step"><span class="step-label">승인</span><span class="step-name">${esc(plan.status === "approved" && plan.approval ? plan.approval.approverName : "미승인")}</span><span class="step-status">${esc(plan.status === "approved" && plan.approval ? "완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "대기중")}</span></div>
         ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
-        ${canApprove ? `
+        ${canApprove || canChangeHyundaiManager ? `
           <label>현대건설 상주관리자</label>
           <div class="manager-field">
             <select id="approveManager">
@@ -959,6 +961,7 @@ async function loadDetail(container, planId) {
           ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
           ${canSubmit ? `<button id="detailSubmitButton" class="primary">승인요청</button>` : ""}
           ${canApprove ? `<button id="detailApproveButton" class="primary">승인</button>` : ""}
+          ${canChangeHyundaiManager ? `<button id="detailManagerButton" class="primary">상주관리자 변경</button>` : ""}
         </div>
         ${canApprove ? `<button id="detailRejectButton" class="block" style="color:var(--danger);">반려</button>` : ""}
         ${canDelete ? `<button id="detailDeleteButton" class="block" style="color:var(--danger);">삭제</button>` : ""}
@@ -968,7 +971,7 @@ async function loadDetail(container, planId) {
         <div class="detail-field-title">작업장소/내용</div>
         <div style="white-space:pre-wrap;">${esc(plan.workLocation || "-")}</div>
         <div class="detail-field-title">작업 인원/장비</div>
-        <div>${esc(plan.workforceEquipment || "-")}</div>
+        <div style="white-space:pre-wrap;">${esc(plan.workforceEquipment || "-")}</div>
         <div class="detail-field-title">위험요인</div>
         <div style="white-space:pre-wrap;">${esc(plan.hazards || "-")}</div>
         <div class="detail-field-title">저감대책</div>
@@ -989,6 +992,7 @@ async function loadDetail(container, planId) {
     container.querySelector("#detailEditButton")?.addEventListener("click", () => go("form", plan.id));
     container.querySelector("#detailSubmitButton")?.addEventListener("click", () => submitPlanFromDetail(plan.id));
     container.querySelector("#detailApproveButton")?.addEventListener("click", () => approvePlan(plan.id));
+    container.querySelector("#detailManagerButton")?.addEventListener("click", () => changeHyundaiManager(plan.id));
     container.querySelector("#detailRejectButton")?.addEventListener("click", () => rejectPlan(plan.id));
     container.querySelector("#detailDeleteButton")?.addEventListener("click", () => deletePlan(plan.id));
     container.querySelector("#detailPdfButton")?.addEventListener("click", () => downloadPlan(plan.id, "pdf"));
@@ -1034,6 +1038,22 @@ async function approvePlan(id) {
     if (!confirm("이 작업계획서를 승인하시겠습니까?")) return;
     const body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
     await api(`/api/plans/${encodeURIComponent(id)}/approve`, { method: "POST", body });
+    go("detail", id);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+async function changeHyundaiManager(id) {
+  try {
+    const sel = document.getElementById("approveManager");
+    const isManual = sel && sel.value === "__manual__";
+    const managerName = isManual
+      ? document.getElementById("approveManagerManual").value.trim()
+      : sel?.value ? sel.options[sel.selectedIndex]?.text || "" : "";
+    if (!sel || !managerName) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
+    if (!confirm("현대건설 상주관리자를 변경하시겠습니까?")) return;
+    const body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
+    await api(`/api/plans/${encodeURIComponent(id)}/hyundai-manager`, { method: "POST", body });
     go("detail", id);
   } catch (e) {
     alert(e.message);
