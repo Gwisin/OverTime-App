@@ -432,6 +432,93 @@ async function handleAdminUpdateUser(request, env, currentUser) {
   return json({ ok: true }, 200, env);
 }
 
+// 사용자 이름 일괄 변경: 이메일로 연결된 기존 작업계획서의 역할별 표시 이름도 함께 변경한다.
+// GitHub API 호출 제한을 피하기 위해 목록을 15건씩 훑고, 마지막 배치에서 users.json을 변경한다.
+async function handleAdminRenameUser(request, env, currentUser) {
+  const body = await request.json();
+  const email = String(body.email || "").trim();
+  const name = String(body.name || "").trim();
+  const cursor = Number.isInteger(body.cursor) && body.cursor >= 0 ? body.cursor : 0;
+  if (!email) return json({ error: "대상 사용자가 없습니다." }, 400, env);
+  if (!name) return json({ error: "이름을 입력해주세요." }, 400, env);
+
+  const usersFile = await ghGetJson(env, "users.json");
+  const users = usersFile ? usersFile.json : {};
+  if (!users[email]) return json({ error: "사용자를 찾을 수 없습니다." }, 404, env);
+
+  const indexFile = await ghGetJson(env, "data/index.json");
+  const list = indexFile ? indexFile.json : [];
+  const batch = list.slice(cursor, cursor + 15);
+  const summaries = {};
+  let plansUpdated = 0;
+
+  for (const item of batch) {
+    const f = await ghGetJson(env, `data/plans/${item.id}.json`);
+    if (!f) continue;
+    const plan = f.json;
+    let changed = false;
+    if (plan.writerEmail === email && plan.writerName !== name) {
+      plan.writerName = name;
+      changed = true;
+    }
+    if (plan.vendorManagerEmail === email && plan.vendorManagerName !== name) {
+      plan.vendorManagerName = name;
+      changed = true;
+    }
+    if (plan.hyundaiManagerEmail === email && plan.hyundaiManagerName !== name) {
+      plan.hyundaiManagerName = name;
+      changed = true;
+    }
+    if (plan.approval && plan.approval.approverEmail === email && plan.approval.approverName !== name) {
+      plan.approval.approverName = name;
+      changed = true;
+    }
+    if (!changed) continue;
+
+    await ghPutJson(env, `data/plans/${item.id}.json`, plan, f.sha, `사용자 이름 변경: ${item.id}`);
+    summaries[item.id] = {
+      writerName: plan.writerName || "",
+      vendorManagerName: plan.vendorManagerName || "",
+      hyundaiManagerName: plan.hyundaiManagerName || "",
+      approverName: plan.status === "approved" && plan.approval ? plan.approval.approverName || "" : "",
+    };
+    plansUpdated++;
+  }
+
+  if (Object.keys(summaries).length) {
+    await updateJsonWithRetry(
+      env,
+      "data/index.json",
+      (items) => {
+        items.forEach((item) => {
+          if (summaries[item.id]) Object.assign(item, summaries[item.id]);
+        });
+        return items;
+      },
+      `목록 사용자 이름 변경: ${email}`
+    );
+  }
+
+  const nextCursor = cursor + batch.length;
+  const remaining = Math.max(0, list.length - nextCursor);
+  let userUpdated = false;
+  if (remaining === 0 && users[email].name !== name) {
+    await updateJsonWithRetry(
+      env,
+      "users.json",
+      (currentUsers) => {
+        if (!currentUsers[email]) throw Object.assign(new Error("사용자를 찾을 수 없습니다."), { status: 404 });
+        currentUsers[email].name = name;
+        return currentUsers;
+      },
+      `사용자 이름 변경: ${email} by ${currentUser.email}`
+    );
+    userUpdated = true;
+  }
+
+  return json({ ok: true, plansUpdated, remaining, nextCursor, userUpdated }, 200, env);
+}
+
 async function handleAdminSetStatus(request, env, currentUser) {
   const { email, status } = await request.json();
   if (!["approved", "suspended"].includes(status)) return json({ error: "잘못된 상태값입니다." }, 400, env);
@@ -855,6 +942,7 @@ export default {
         if (path === "/api/admin/users" && request.method === "GET") return await handleAdminListUsers(env);
         if (path === "/api/admin/signature" && request.method === "GET") return await handleAdminSignature(env, url);
         if (path === "/api/admin/users/update" && request.method === "POST") return await handleAdminUpdateUser(request, env, currentUser);
+        if (path === "/api/admin/rename-user" && request.method === "POST") return await handleAdminRenameUser(request, env, currentUser);
         if (path === "/api/admin/users/status" && request.method === "POST") return await handleAdminSetStatus(request, env, currentUser);
         if (path === "/api/admin/users/delete" && request.method === "POST") return await handleAdminDeleteUser(request, env, currentUser);
         if (path === "/api/admin/rename-company" && request.method === "POST") return await handleAdminRenameCompany(request, env, currentUser);
