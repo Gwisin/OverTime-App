@@ -733,6 +733,31 @@ async function handleGetPlan(request, env, id) {
   return json({ plan: file.json }, 200, env);
 }
 
+function signatureDataUrl(base64) {
+  if (!base64) return null;
+  const mime = base64.startsWith("/9j/") ? "image/jpeg" : "image/png";
+  return `data:${mime};base64,${base64}`;
+}
+
+async function handleGetPlanSignatures(env, id) {
+  const file = await ghGetJson(env, `data/plans/${id}.json`);
+  if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
+  const plan = file.json;
+  const executionPath = plan.executionReview && plan.executionReview.signatureUrl;
+  const safetyApproval = plan.safetyApproval || (plan.status === "approved" ? plan.approval : null);
+  const safetyPath = safetyApproval && safetyApproval.signatureUrl;
+  const [execution, safety] = await Promise.all([
+    executionPath ? ghGetBinaryBase64(env, executionPath) : null,
+    safetyPath ? ghGetBinaryBase64(env, safetyPath) : null,
+  ]);
+  return json({
+    signatures: {
+      execution: signatureDataUrl(execution),
+      safety: signatureDataUrl(safety),
+    },
+  }, 200, env);
+}
+
 function makePlanId(workDate, company, workType) {
   return `${workDate}_${safeIdPart(company)}_${safeIdPart(workType)}`;
 }
@@ -1103,12 +1128,13 @@ export default {
       if (path === "/api/plans" && request.method === "GET") return await handleListPlans(request, env, url, currentUser);
       if (path === "/api/plans" && request.method === "POST") return await handleSavePlan(request, env, currentUser);
 
-      const planIdMatch = path.match(/^\/api\/plans\/([^/]+)(\/(submit|execution-review|safety-approve|approve|reject|hyundai-manager))?$/);
+      const planIdMatch = path.match(/^\/api\/plans\/([^/]+)(\/(submit|execution-review|safety-approve|approve|reject|hyundai-manager|signatures))?$/);
       if (planIdMatch) {
         const id = decodeURIComponent(planIdMatch[1]);
         const action = planIdMatch[3];
         if (!isSafePlanId(id)) return json({ error: "잘못된 작업계획서 번호입니다." }, 400, env);
         if (request.method === "GET" && !action) return await handleGetPlan(request, env, id);
+        if (request.method === "GET" && action === "signatures") return await handleGetPlanSignatures(env, id);
         if (request.method === "DELETE" && !action) return await handleDeletePlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "submit") return await handleSubmitPlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "execution-review") return await handleExecutionReview(request, env, id, currentUser);

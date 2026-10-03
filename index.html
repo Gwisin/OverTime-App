@@ -1618,7 +1618,7 @@ function pdfFit(value) {
 
 function approvalSignatureCell(approval, key) {
   const signatureUrl = approval && approval.signatureUrl ? ` data-signature="${esc(approval.signatureUrl)}"` : "";
-  return `<td class="pdf-signature" id="pdf-signature-${key}"${signatureUrl}></td>`;
+  return `<td class="pdf-signature" id="pdf-signature-${key}" data-signature-key="${key}"${signatureUrl}></td>`;
 }
 
 function planToTemplateHtml(plan) {
@@ -1692,14 +1692,21 @@ function planToTemplateHtml(plan) {
   </div>`;
 }
 
-async function addPdfSignatures(container) {
+async function addPdfSignatures(container, planId) {
   const cells = Array.from(container.querySelectorAll("[data-signature]"));
+  if (!cells.length || !planId) return;
+  let signatures = {};
+  try {
+    const result = await api(`/api/plans/${encodeURIComponent(planId)}/signatures`);
+    signatures = result.signatures || {};
+  } catch (e) {
+    return;
+  }
   await Promise.all(cells.map(async (cell) => {
     try {
-      const imgUrl = await getSignatureImageUrl(cell.dataset.signature);
+      const imgUrl = signatures[cell.dataset.signatureKey];
       if (!imgUrl) return;
       const img = document.createElement("img");
-      img.crossOrigin = "anonymous";
       img.src = imgUrl;
       await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
       if (img.complete && img.naturalWidth) cell.appendChild(img);
@@ -1738,20 +1745,13 @@ async function withManagerContacts(plan) {
 async function renderPlanToCanvas(plan) {
   const container = document.getElementById("pdf-template");
   container.innerHTML = planToTemplateHtml(await withManagerContacts(plan));
-  await addPdfSignatures(container);
+  await addPdfSignatures(container, plan.id);
   if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
   fitPdfText(container);
   const canvas = await html2canvas(container.firstElementChild, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
   container.innerHTML = "";
   return canvas;
 }
-
-async function getSignatureImageUrl(path) {
-  // GitHub raw 콘텐츠 URL (저장소가 private이면 이 방식은 표시가 제한될 수 있습니다.
-  // 필요시 Worker에 서명 이미지를 프록시하는 API를 추가하세요.
-  return `https://raw.githubusercontent.com/${WORKER_REPO_HINT}/${path}`;
-}
-const WORKER_REPO_HINT = "Gwisin/OverTime/main"; // README 참고하여 실제 값으로 교체
 
 function canvasToA4Pdf(canvas) {
   const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
@@ -1780,6 +1780,7 @@ function printablePlanDocument(plan) {
       @page { size:A4 portrait; margin:10mm; }
       html, body { margin:0; padding:0; background:#fff; }
       body { color:#000; font-family:"Pretendard Variable", Pretendard, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+      .pdf-page, .pdf-page * { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
       .pdf-page { width:190mm !important; height:277mm !important; padding:0 !important; overflow:hidden; font-size:10.5pt !important; line-height:1.25 !important; }
       .pdf-title { height:15mm !important; font-size:17pt !important; }
       .pdf-section-title { height:12mm !important; font-size:14pt !important; }
@@ -1823,7 +1824,7 @@ async function openPlanPdf(id) {
     preview.document.open();
     preview.document.write(printablePlanDocument(plan));
     preview.document.close();
-    await addPdfSignatures(preview.document);
+    await addPdfSignatures(preview.document, plan.id);
     await waitForPrintAssets(preview.document);
     fitPdfText(preview.document);
     preview.focus();
