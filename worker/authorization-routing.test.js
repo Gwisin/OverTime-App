@@ -65,10 +65,11 @@ function mockExternalRequests({ email = "vendor@example.com", users = approvedUs
   return { calls, fetch };
 }
 
-async function request(path, { method = "GET", body, token = "google-token" } = {}) {
+async function request(path, { method = "GET", body, token = "google-token", origin } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (origin) headers.Origin = origin;
   return worker.fetch(new Request(`https://worker.example${path}`, {
     method,
     headers,
@@ -94,6 +95,107 @@ test("protected APIs reject unauthenticated requests with 401", async () => {
     assert.deepEqual(await response.json(), { error: "로그인이 필요합니다." });
     assert.equal(calls.length, 0);
   });
+});
+
+test("CORS allows configured origins and rejects every other browser origin", async () => {
+  await withMockFetch({}, async (calls) => {
+    const allowed = await request("/api/companies", { token: null, origin: "https://example.com" });
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), "https://example.com");
+    assert.equal(allowed.headers.get("Vary"), "Origin");
+
+    const callsBeforeRejectedRequest = calls.length;
+    const rejected = await request("/api/companies", { token: null, origin: "https://evil.example" });
+    assert.equal(rejected.status, 403);
+    assert.deepEqual(await rejected.json(), { error: "허용되지 않은 요청 출처입니다.", code: "ORIGIN_NOT_ALLOWED" });
+    assert.equal(calls.length, callsBeforeRejectedRequest);
+  });
+});
+
+test("CORS fails closed for browser requests when ALLOWED_ORIGIN is missing", async () => {
+  const response = await worker.fetch(new Request("https://worker.example/api/companies", {
+    headers: { Origin: "https://example.com" },
+  }), { ...env, ALLOWED_ORIGIN: "" });
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.has("Access-Control-Allow-Origin"), false);
+});
+
+test("test-login tokens are not accepted without Google verification", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.hostname === "oauth2.googleapis.com") return new Response("invalid token", { status: 401 });
+    throw new Error(`Unexpected external request: ${url}`);
+  };
+  try {
+    const response = await request("/api/auth", {
+      method: "POST",
+      token: null,
+      body: { idToken: "TEST::secret::admin@example.com::Admin" },
+    });
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "로그인 정보를 확인할 수 없습니다." });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("JSON request limits reject oversized bodies before external API calls", async () => {
+  await withMockFetch({}, async (calls) => {
+    const response = await request("/api/auth", {
+      method: "POST",
+      token: null,
+      body: { idToken: "x".repeat(70 * 1024) },
+    });
+    assert.equal(response.status, 413);
+    assert.deepEqual(await response.json(), { error: "요청 데이터가 너무 큽니다.", code: "REQUEST_TOO_LARGE" });
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("plan validation rejects impossible dates and oversized fields", async () => {
+  await withMockFetch({}, async (calls) => {
+    const invalidDate = await request("/api/plans", {
+      method: "POST",
+      body: { workDate: "2026-02-31", company: "협력사", workType: "야간" },
+    });
+    assert.equal(invalidDate.status, 400);
+    assert.equal((await invalidDate.json()).code, "INVALID_DATE");
+
+    const oversizedField = await request("/api/plans", {
+      method: "POST",
+      body: { workDate: "2026-10-05", company: "협력사", workType: "야간", hazards: "x".repeat(5001) },
+    });
+    assert.equal(oversizedField.status, 400);
+    assert.equal((await oversizedField.json()).code, "INVALID_INPUT");
+    assert.equal(calls.some(({ method }) => method === "PUT"), false);
+  });
+});
+
+test("internal upstream errors do not expose GitHub response details", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  globalThis.fetch = async (input) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    if (url.hostname === "oauth2.googleapis.com") {
+      return Response.json({ aud: env.GOOGLE_CLIENT_ID, email: "vendor@example.com", email_verified: "true", name: "Vendor" });
+    }
+    if (url.hostname === "api.github.com") return new Response("private repository detail", { status: 500 });
+    throw new Error(`Unexpected external request: ${url}`);
+  };
+  console.error = () => {};
+  try {
+    const response = await request("/api/plans");
+    assert.equal(response.status, 500);
+    const body = await response.json();
+    assert.equal(body.error, "서버 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.");
+    assert.equal(body.code, "INTERNAL_ERROR");
+    assert.equal(typeof body.requestId, "string");
+    assert.doesNotMatch(JSON.stringify(body), /private repository detail|users\.json/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+  }
 });
 
 test("plan signature API returns vendor request, review, and approval images", async () => {
@@ -311,6 +413,7 @@ test("save accepts a manual vendor manager and ignores Hyundai manager fields be
         vendorManagerName: "  미가입 협력소장  ",
         hyundaiManagerEmail: "spoofed@hyundai.com",
         hyundaiManagerName: "작성자가 지정한 이름",
+        unexpectedField: "저장되면 안 됨",
       },
     });
     assert.equal(response.status, 200);
@@ -322,6 +425,36 @@ test("save accepts a manual vendor manager and ignores Hyundai manager fields be
     assert.equal(saved.vendorManagerName, "미가입 협력소장");
     assert.equal(saved.hyundaiManagerEmail, undefined);
     assert.equal(saved.hyundaiManagerName, undefined);
+    assert.equal(saved.unexpectedField, undefined);
+  });
+});
+
+test("save allowlist preserves omitted optional fields on existing plans", async () => {
+  const files = {
+    "data/index.json": [],
+    "data/plans/existing-plan.json": {
+      id: "existing-plan",
+      workDate: "2026-10-03",
+      company: "협력사",
+      workType: "점심",
+      workLocation: "기존 작업 위치",
+      hazards: "기존 위험요인",
+      status: "draft",
+      writerEmail: "vendor@example.com",
+      writerName: "Vendor",
+      createdAt: "2026-10-01T00:00:00.000Z",
+    },
+  };
+  await withMockFetch({ files }, async (calls) => {
+    const response = await request("/api/plans", {
+      method: "POST",
+      body: { id: "existing-plan", workDate: "2026-10-03", company: "협력사", workType: "점심" },
+    });
+    assert.equal(response.status, 200);
+    const planPut = calls.find(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/plans/existing-plan.json"));
+    const saved = JSON.parse(Buffer.from(JSON.parse(planPut.body).content, "base64").toString());
+    assert.equal(saved.workLocation, "기존 작업 위치");
+    assert.equal(saved.hazards, "기존 위험요인");
   });
 });
 

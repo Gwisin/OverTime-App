@@ -16,8 +16,9 @@ function githubContent(value, sha = "sha") {
   return { sha, content: Buffer.from(JSON.stringify(value)).toString("base64") };
 }
 
-async function register(body, calls) {
+async function register(body, calls, existingUsers = {}) {
   const originalFetch = globalThis.fetch;
+  let currentUsers = structuredClone(existingUsers);
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === "string" ? input : input.url);
     const method = init.method || "GET";
@@ -26,10 +27,15 @@ async function register(body, calls) {
       return Response.json({ aud: env.GOOGLE_CLIENT_ID, email: "new@example.com", email_verified: "true", name: "New" });
     }
     if (method === "GET" && url.pathname.endsWith("/contents/users.json")) {
-      return Response.json(githubContent({}));
+      return Response.json(githubContent(currentUsers));
     }
     if (method === "GET") return new Response("not found", { status: 404 });
-    if (method === "PUT") return Response.json({ content: { sha: "new-sha" } });
+    if (method === "PUT") {
+      if (url.pathname.endsWith("/contents/users.json")) {
+        currentUsers = JSON.parse(Buffer.from(JSON.parse(init.body).content, "base64").toString());
+      }
+      return Response.json({ content: { sha: "new-sha" } });
+    }
     throw new Error(`Unexpected request: ${method} ${url}`);
   };
   try {
@@ -49,11 +55,13 @@ test("registration stores an included signature and links it to the pending user
   assert.equal(response.status, 200);
 
   const puts = calls.filter(({ method }) => method === "PUT");
+  assert.equal(calls.filter(({ method, url }) => method === "GET" && url.pathname.endsWith("/contents/users.json")).length, 1);
   const signaturePut = puts.find(({ url }) => decodeURIComponent(url.pathname).endsWith("/contents/signatures/new_example_com.png"));
   assert.ok(signaturePut);
   assert.equal(JSON.parse(signaturePut.body).content, "aGVsbG8=");
 
-  const usersPut = puts.find(({ url }) => url.pathname.endsWith("/contents/users.json"));
+  const usersPut = puts.filter(({ url }) => url.pathname.endsWith("/contents/users.json")).at(-1);
+  assert.equal(puts.filter(({ url }) => url.pathname.endsWith("/contents/users.json")).length, 1);
   const users = JSON.parse(Buffer.from(JSON.parse(usersPut.body).content, "base64").toString());
   assert.equal(users["new@example.com"].status, "pending");
   assert.equal(users["new@example.com"].signatureUrl, "signatures/new_example_com.png");
@@ -70,6 +78,28 @@ test("registration rejects an invalid signature before changing stored user data
   const calls = [];
   const response = await register({ imageBase64: "not-an-image" }, calls);
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "PNG 또는 JPG 형식의 서명 이미지를 등록해주세요." });
+  assert.deepEqual(await response.json(), { error: "PNG 또는 JPG 형식의 서명 이미지를 등록해주세요.", code: "INVALID_SIGNATURE" });
   assert.equal(calls.some(({ method }) => method === "PUT"), false);
+});
+
+test("registration cannot overwrite an existing account or signature", async () => {
+  for (const status of ["pending", "approved", "rejected", "suspended"]) {
+    const calls = [];
+    const existing = {
+      "new@example.com": {
+        name: "Existing",
+        company: "기존업체",
+        status,
+        signatureUrl: "signatures/existing.png",
+        approvedBy: "admin@example.com",
+      },
+    };
+    const response = await register({ imageBase64: "data:image/png;base64,aGVsbG8=" }, calls, existing);
+    assert.equal(response.status, 409, status);
+    assert.deepEqual(await response.json(), {
+      error: "이미 가입 신청 또는 등록된 계정입니다.",
+      code: "ACCOUNT_ALREADY_EXISTS",
+    });
+    assert.equal(calls.some(({ method }) => method === "PUT"), false, status);
+  }
 });
