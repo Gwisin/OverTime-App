@@ -167,10 +167,6 @@
   .login-subtitle { margin: 0 0 28px; font-size: 15px; line-height: 1.5; color: var(--muted); text-align: center; }
   #gsi-button-container { display: flex; justify-content: center; width: 100%; min-height: 44px; }
   .login-help { margin: 14px 0 0; font-size: 14px; line-height: 1.5; color: var(--muted); text-align: center; }
-  .login-dev { margin: 26px 0 0; text-align: center; }
-  .login-dev a { color: var(--accent); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
-  #testLoginArea { margin-top: 18px; padding: 16px; background: #f7f8fa; border-radius: 12px; text-align: left; }
-  #testLoginArea label:first-child { margin-top: 0; }
   @media (max-width: 480px) {
     .login-card { padding: 30px 20px 32px; }
     .login-icon { width: 80px; height: 80px; margin-bottom: 16px; }
@@ -337,16 +333,6 @@ function renderLogin() {
         <p class="login-subtitle">보충작업 계획서 작성 및 결재</p>
         <div id="gsi-button-container"></div>
         <p class="login-help">Google 계정으로 로그인 후 이용할 수 있습니다.</p>
-        <div class="login-dev"><a href="#" onclick="toggleTestLogin();return false;">테스트 로그인 (개발용)</a></div>
-        <div id="testLoginArea" class="hidden">
-          <label>테스트 시크릿</label>
-          <input id="testSecret" type="password" placeholder="Worker에 등록한 TEST_LOGIN_SECRET" />
-          <label>테스트 이메일 (가상 아이디처럼 사용)</label>
-          <input id="testEmail" type="text" placeholder="tester1@test.local" />
-          <label>이름</label>
-          <input id="testName" type="text" placeholder="김현대" />
-          <button class="primary block" onclick="testLogin()">테스트 로그인</button>
-        </div>
       </div>
     </div>`;
   setTimeout(initGoogleButton, 0);
@@ -399,30 +385,6 @@ async function onGoogleCredential(response) {
       go("home");
     } else {
       state.pendingRegisterInfo = { email: data.email, name: data.name };
-      render();
-    }
-  } catch (e) {
-    alert(e.message);
-  }
-}
-
-function toggleTestLogin() {
-  document.getElementById("testLoginArea").classList.toggle("hidden");
-}
-async function testLogin() {
-  const secret = document.getElementById("testSecret").value.trim();
-  const email = document.getElementById("testEmail").value.trim();
-  const name = document.getElementById("testName").value.trim();
-  if (!secret || !email) return alert("시크릿과 이메일을 입력해주세요.");
-  state.idToken = `TEST::${secret}::${encodeURIComponent(email)}::${encodeURIComponent(name || email)}`;
-  localStorage.setItem("idToken", state.idToken);
-  try {
-    const data = await api("/api/auth", { method: "POST", body: { idToken: state.idToken }, auth: false });
-    state.authStatus = data.status;
-    if (data.status === "approved") {
-      state.user = data.user;
-      go("home");
-    } else {
       render();
     }
   } catch (e) {
@@ -1904,11 +1866,7 @@ function bootAuth() {
     .catch(() => {
       localStorage.removeItem("idToken");
       state.idToken = null;
-      if (saved.startsWith("TEST::")) {
-        render();
-      } else {
-        attemptSilentGoogleLogin();
-      }
+      attemptSilentGoogleLogin();
     });
 }
 

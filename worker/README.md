@@ -22,9 +22,10 @@ Configure these values in Cloudflare rather than in source code:
 - `GITHUB_REPO`: data-repository name
 - `GITHUB_BRANCH`: data branch; defaults to `main`
 - `GOOGLE_CLIENT_ID`: Google OAuth client ID used by the frontend
-- `ALLOWED_ORIGIN`: deployed frontend origin
+- `ALLOWED_ORIGIN`: required comma-separated list of deployed frontend origins; browser requests fail closed when omitted
 - `ADMIN_EMAILS`: comma-separated administrator email addresses
-- `TEST_LOGIN_SECRET`: omit in production unless the production risk is explicitly accepted
+
+The production Worker only accepts Google ID tokens. Remove any legacy `TEST_LOGIN_SECRET` setting from Cloudflare before deployment.
 
 ## Local checks
 

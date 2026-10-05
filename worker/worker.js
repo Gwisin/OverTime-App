@@ -1,9 +1,50 @@
+function allowedOrigins(env) {
+  return String(env.ALLOWED_ORIGIN || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
 function corsHeaders(env) {
+  const allowedOrigin = env.SUPPRESS_CORS ? null : env.RESPONSE_ORIGIN || allowedOrigins(env)[0];
   return {
-    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+    ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin } : {}),
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
   };
+}
+
+function isAllowedOrigin(request, env) {
+  const origin = request.headers.get("Origin");
+  return !origin || allowedOrigins(env).includes(origin);
+}
+
+function publicError(status, message, code) {
+  return Object.assign(new Error(message), { status, code, expose: true });
+}
+
+async function readJson(request, maxBytes = 64 * 1024, { allowEmpty = false } = {}) {
+  const contentType = request.headers.get("Content-Type") || "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    if (allowEmpty && !request.body) return {};
+    throw publicError(415, "JSON 형식의 요청만 사용할 수 있습니다.", "UNSUPPORTED_MEDIA_TYPE");
+  }
+  const contentLength = Number(request.headers.get("Content-Length") || 0);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw publicError(413, "요청 데이터가 너무 큽니다.", "REQUEST_TOO_LARGE");
+  }
+  const text = await request.text();
+  if (!text && allowEmpty) return {};
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+    throw publicError(413, "요청 데이터가 너무 큽니다.", "REQUEST_TOO_LARGE");
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw publicError(400, "올바른 JSON 형식이 아닙니다.", "INVALID_JSON");
+  }
 }
 
 function json(data, status, env) {
@@ -162,17 +203,43 @@ function isSafePlanId(id) {
 function normalizeManagerName(value, label) {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") {
-    throw Object.assign(new Error(`${label} 이름이 올바르지 않습니다.`), { status: 400 });
+    throw publicError(400, `${label} 이름이 올바르지 않습니다.`, "INVALID_MANAGER_NAME");
   }
   const name = value.trim();
   if (name.length > 100) {
-    throw Object.assign(new Error(`${label} 이름은 100자 이하로 입력해주세요.`), { status: 400 });
+    throw publicError(400, `${label} 이름은 100자 이하로 입력해주세요.`, "INVALID_MANAGER_NAME");
   }
   return name;
 }
 
 function normalizeManagerEmail(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeText(value, label, maxLength, { required = false } = {}) {
+  if (value === undefined || value === null) value = "";
+  if (typeof value !== "string") throw publicError(400, `${label} 값이 올바르지 않습니다.`, "INVALID_INPUT");
+  const normalized = value.trim();
+  if (required && !normalized) throw publicError(400, `${label}을(를) 입력해주세요.`, "INVALID_INPUT");
+  if (normalized.length > maxLength) throw publicError(400, `${label}은(는) ${maxLength}자 이하로 입력해주세요.`, "INVALID_INPUT");
+  return normalized;
+}
+
+function normalizeDate(value) {
+  const date = normalizeText(value, "작업일자", 10, { required: true });
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw publicError(400, "작업일자 형식이 올바르지 않습니다.", "INVALID_DATE");
+  }
+  return date;
+}
+
+function normalizeTime(value, label) {
+  const time = normalizeText(value, label, 5);
+  if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    throw publicError(400, `${label} 형식이 올바르지 않습니다.`, "INVALID_TIME");
+  }
+  return time;
 }
 
 async function ghDeleteFile(env, path, sha, message) {
@@ -186,9 +253,9 @@ async function ghDeleteFile(env, path, sha, message) {
 }
 
 // index.json 처럼 동시수정 충돌이 날 수 있는 파일을 안전하게 갱신 (충돌시 1회 재시도)
-async function updateJsonWithRetry(env, path, mutatorFn, message) {
+async function updateJsonWithRetry(env, path, mutatorFn, message, initialExisting) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const existing = await ghGetJson(env, path);
+    const existing = attempt === 0 && initialExisting !== undefined ? initialExisting : await ghGetJson(env, path);
     const current = existing ? existing.json : [];
     const updated = mutatorFn(current);
     try {
@@ -205,27 +272,14 @@ async function updateJsonWithRetry(env, path, mutatorFn, message) {
 // ---------- Google 로그인 검증 ----------
 
 async function verifyGoogleToken(env, idToken) {
-  // ---- 테스트용 우회 로그인 (개발/테스트 기간에만 사용) ----
-  // 프론트엔드에서 "TEST::시크릿::이메일::이름" 형태의 토큰을 보내면
-  // 구글 서버에 물어보지 않고 바로 그 사용자로 인증 처리합니다.
-  // env.TEST_LOGIN_SECRET 값을 Cloudflare Worker에 등록해야 동작하며,
-  // 값을 등록하지 않으면(비어있으면) 이 우회 로그인은 자동으로 비활성화됩니다.
-  if (idToken.startsWith("TEST::")) {
-    if (!env.TEST_LOGIN_SECRET) return null;
-    const parts = idToken.split("::");
-    const [, secret, encEmail, encName] = parts;
-    if (secret !== env.TEST_LOGIN_SECRET || !encEmail) return null;
-    const email = decodeURIComponent(encEmail);
-    const name = decodeURIComponent(encName || encEmail);
-    return { email, name, picture: null };
-  }
+  if (typeof idToken !== "string" || !idToken) return null;
 
   const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
   if (!res.ok) return null;
   const data = await res.json();
   if (data.aud !== env.GOOGLE_CLIENT_ID) return null;
   if (!data.email || data.email_verified !== "true") return null;
-  return { email: data.email, name: data.name, picture: data.picture };
+  return { email: data.email.toLowerCase(), name: data.name, picture: data.picture };
 }
 
 async function requireAuth(request, env) {
@@ -245,7 +299,7 @@ function safeEmailFile(email) {
 // ---------- 라우트 핸들러 ----------
 
 async function handleAuth(request, env) {
-  const { idToken } = await request.json();
+  const { idToken } = await readJson(request);
   const googleUser = await verifyGoogleToken(env, idToken);
   if (!googleUser) return json({ error: "로그인 정보를 확인할 수 없습니다." }, 401, env);
 
@@ -286,31 +340,39 @@ async function handleAuth(request, env) {
 }
 
 async function handleRegister(request, env) {
-  const body = await request.json();
+  const body = await readJson(request, 2_100_000);
   const googleUser = await verifyGoogleToken(env, body.idToken);
   if (!googleUser) return json({ error: "로그인 정보를 확인할 수 없습니다." }, 401, env);
 
-  const { company, adminName, phone, imageBase64 } = body;
-  if (!company || !adminName || !phone) {
-    return json({ error: "업체명, 관리자명, 연락처를 모두 입력해주세요." }, 400, env);
-  }
-  const companyName = String(company).trim();
+  const { imageBase64 } = body;
+  const companyName = normalizeText(body.company, "업체명", 100, { required: true });
+  const adminName = normalizeText(body.adminName, "관리자명", 100, { required: true });
+  const phone = normalizeText(body.phone, "연락처", 30, { required: true });
   if (isHyundaiLookalike(companyName)) {
     return json({ error: `현대건설 소속은 드롭다운에서 "${HYUNDAI_COMPANY}"를 선택해주세요.` }, 400, env);
   }
   const org = orgFromCompany(companyName);
-  let signatureUrl = null;
-  if (imageBase64) {
-    const base64 = signatureBase64(imageBase64);
-    signatureUrl = `signatures/${safeEmailFile(googleUser.email)}`;
+  const usersFile = await ghGetJson(env, "users.json");
+  if (usersFile && usersFile.json[googleUser.email]) {
+    return json({ error: "이미 가입 신청 또는 등록된 계정입니다.", code: "ACCOUNT_ALREADY_EXISTS" }, 409, env);
+  }
+  const signatureBase64Content = imageBase64 ? signatureBase64(imageBase64) : null;
+  const signatureUrl = signatureBase64Content ? `signatures/${safeEmailFile(googleUser.email)}` : null;
+
+  // Validate and upload the optional signature before creating the account. This keeps
+  // registration retryable if the image write fails and avoids a second users.json update.
+  if (signatureBase64Content) {
     const existing = await ghGetFile(env, signatureUrl);
-    await ghPutBinaryBase64(env, signatureUrl, base64, existing ? existing.sha : undefined, `가입 서명 등록: ${googleUser.email}`);
+    await ghPutBinaryBase64(env, signatureUrl, signatureBase64Content, existing ? existing.sha : undefined, `가입 서명 등록: ${googleUser.email}`);
   }
 
   await updateJsonWithRetry(
     env,
     "users.json",
     (users) => {
+      if (users[googleUser.email]) {
+        throw publicError(409, "이미 가입 신청 또는 등록된 계정입니다.", "ACCOUNT_ALREADY_EXISTS");
+      }
       users[googleUser.email] = {
         name: adminName,
         company: companyName,
@@ -322,7 +384,8 @@ async function handleRegister(request, env) {
       };
       return users;
     },
-    `가입신청: ${googleUser.email}`
+    `가입신청: ${googleUser.email}`,
+    usersFile
   );
 
   return json({ ok: true }, 200, env);
@@ -362,7 +425,7 @@ async function handlePendingUsers(request, env) {
 }
 
 async function handleApproveUser(request, env, approverEmail) {
-  const { email, approve } = await request.json();
+  const { email, approve } = await readJson(request);
   await updateJsonWithRetry(
     env,
     "users.json",
@@ -379,7 +442,7 @@ async function handleApproveUser(request, env, approverEmail) {
 }
 
 async function handleSignatureUpload(request, env, userEmail) {
-  const { imageBase64 } = await request.json();
+  const { imageBase64 } = await readJson(request, 2_100_000);
   const base64 = signatureBase64(imageBase64);
   const path = `signatures/${safeEmailFile(userEmail)}`;
   const existing = await ghGetFile(env, path);
@@ -438,14 +501,14 @@ async function handleAdminSignature(env, url) {
 }
 
 async function handleAdminUpdateUser(request, env, currentUser) {
-  const { email, name, phone } = await request.json();
+  const { email, name, phone } = await readJson(request);
   if (!email) return json({ error: "대상 사용자가 없습니다." }, 400, env);
   if (name !== undefined && !String(name).trim()) return json({ error: "이름을 입력해주세요." }, 400, env);
   await updateJsonWithRetry(
     env,
     "users.json",
     (users) => {
-      if (!users[email]) throw Object.assign(new Error("사용자를 찾을 수 없습니다."), { status: 404 });
+      if (!users[email]) throw publicError(404, "사용자를 찾을 수 없습니다.", "USER_NOT_FOUND");
       if (name !== undefined) users[email].name = String(name).trim();
       if (phone !== undefined) users[email].phone = String(phone).trim();
       return users;
@@ -458,7 +521,7 @@ async function handleAdminUpdateUser(request, env, currentUser) {
 // 사용자 이름 일괄 변경: 이메일로 연결된 기존 작업계획서의 역할별 표시 이름도 함께 변경한다.
 // GitHub API 호출 제한을 피하기 위해 목록을 15건씩 훑고, 마지막 배치에서 users.json을 변경한다.
 async function handleAdminRenameUser(request, env, currentUser) {
-  const body = await request.json();
+  const body = await readJson(request);
   const email = String(body.email || "").trim();
   const name = String(body.name || "").trim();
   const cursor = Number.isInteger(body.cursor) && body.cursor >= 0 ? body.cursor : 0;
@@ -540,7 +603,7 @@ async function handleAdminRenameUser(request, env, currentUser) {
       env,
       "users.json",
       (currentUsers) => {
-        if (!currentUsers[email]) throw Object.assign(new Error("사용자를 찾을 수 없습니다."), { status: 404 });
+        if (!currentUsers[email]) throw publicError(404, "사용자를 찾을 수 없습니다.", "USER_NOT_FOUND");
         currentUsers[email].name = name;
         return currentUsers;
       },
@@ -553,16 +616,16 @@ async function handleAdminRenameUser(request, env, currentUser) {
 }
 
 async function handleAdminSetStatus(request, env, currentUser) {
-  const { email, status } = await request.json();
+  const { email, status } = await readJson(request);
   if (!["approved", "suspended"].includes(status)) return json({ error: "잘못된 상태값입니다." }, 400, env);
   if (isAdminEmail(env, email)) return json({ error: "ADMIN 계정은 변경할 수 없습니다." }, 403, env);
   await updateJsonWithRetry(
     env,
     "users.json",
     (users) => {
-      if (!users[email]) throw Object.assign(new Error("사용자를 찾을 수 없습니다."), { status: 404 });
+      if (!users[email]) throw publicError(404, "사용자를 찾을 수 없습니다.", "USER_NOT_FOUND");
       if (!["approved", "suspended"].includes(users[email].status)) {
-        throw Object.assign(new Error("승인된 사용자만 이용 정지/해제할 수 있습니다."), { status: 400 });
+        throw publicError(400, "승인된 사용자만 이용 정지/해제할 수 있습니다.", "INVALID_ACCOUNT_STATUS");
       }
       users[email].status = status;
       return users;
@@ -573,7 +636,7 @@ async function handleAdminSetStatus(request, env, currentUser) {
 }
 
 async function handleAdminDeleteUser(request, env, currentUser) {
-  const { email } = await request.json();
+  const { email } = await readJson(request);
   if (isAdminEmail(env, email)) return json({ error: "ADMIN 계정은 삭제할 수 없습니다." }, 403, env);
   const f = await ghGetJson(env, "users.json");
   const rec = f && f.json[email];
@@ -599,7 +662,7 @@ async function handleAdminDeleteUser(request, env, currentUser) {
 // 회사명 일괄 변경: 같은 업체 소속 전원 + 기존 작업계획서의 업체명
 // (무료 플랜의 요청당 호출 제한 때문에 작업계획서는 한 번에 15건씩 처리하고 remaining을 돌려줌 → 화면에서 반복 호출)
 async function handleAdminRenameCompany(request, env, currentUser) {
-  const body = await request.json();
+  const body = await readJson(request);
   const from = String(body.from || "").trim();
   const to = String(body.to || "").trim();
   if (!from || !to) return json({ error: "회사명을 입력해주세요." }, 400, env);
@@ -767,11 +830,10 @@ function makePlanId(workDate, company, workType) {
 }
 
 async function handleSavePlan(request, env, currentUser) {
-  const body = await request.json();
-  const { workDate, company, workType } = body;
-  if (!workDate || !company || !workType) {
-    return json({ error: "작업일자, 업체명, 작업구분은 필수입니다." }, 400, env);
-  }
+  const body = await readJson(request, 128 * 1024);
+  const workDate = normalizeDate(body.workDate);
+  const company = normalizeText(body.company, "업체명", 100, { required: true });
+  const workType = normalizeText(body.workType, "작업구분", 50, { required: true });
   // 협력업체는 자기 업체 명의의 작업계획서만 작성·수정할 수 있고, 현대건설 단계는 모든 업체 건을 작성·수정할 수 있다
   const isHyundai = currentUser.org === "hyundai";
   if (!isHyundai && company !== currentUser.company) {
@@ -791,13 +853,24 @@ async function handleSavePlan(request, env, currentUser) {
   const now = new Date().toISOString();
 
   // 서버가 관리하는 값(상태, 승인 정보, 작성자, 시각 등)은 클라이언트가 보낸 값을 무시한다
-  const safeBody = { ...body };
-  ["status", "approval", "executionReview", "safetyApproval", "writerEmail", "writerName", "createdAt", "updatedAt", "submittedAt", "rejectedAt", "rejectedBy", "rejectedByName", "rejectedStage", "rejectReason"].forEach((k) => delete safeBody[k]);
-  safeBody.vendorManagerEmail = normalizeManagerEmail(body.vendorManagerEmail);
-  safeBody.vendorManagerName = normalizeManagerName(body.vendorManagerName, "협력업체 상주관리자");
-  // 현대건설 상주관리자는 승인 단계에서만 현대건설 승인자가 지정한다.
-  delete safeBody.hyundaiManagerEmail;
-  delete safeBody.hyundaiManagerName;
+  const safeBody = {
+    workDate,
+    workType,
+    company,
+    vendorManagerEmail: normalizeManagerEmail(body.vendorManagerEmail),
+    vendorManagerName: normalizeManagerName(body.vendorManagerName, "협력업체 상주관리자"),
+  };
+  const optionalFields = {
+    workTimeStart: () => normalizeTime(body.workTimeStart, "작업 시작시간"),
+    workTimeEnd: () => normalizeTime(body.workTimeEnd, "작업 종료시간"),
+    workLocation: () => normalizeText(body.workLocation, "작업장소/내용", 3000),
+    workforceEquipment: () => normalizeText(body.workforceEquipment, "작업 인원/장비", 3000),
+    hazards: () => normalizeText(body.hazards, "위험요인", 5000),
+    mitigations: () => normalizeText(body.mitigations, "저감대책", 5000),
+  };
+  Object.entries(optionalFields).forEach(([key, normalize]) => {
+    if (Object.hasOwn(body, key)) safeBody[key] = normalize();
+  });
 
   const plan = {
     ...(existingFile ? existingFile.json : {}),
@@ -875,31 +948,31 @@ async function handleSubmitPlan(request, env, id, currentUser) {
 
 function signatureBase64(dataUrl) {
   if (typeof dataUrl !== "string" || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) {
-    throw Object.assign(new Error("PNG 또는 JPG 형식의 서명 이미지를 등록해주세요."), { status: 400 });
+    throw publicError(400, "PNG 또는 JPG 형식의 서명 이미지를 등록해주세요.", "INVALID_SIGNATURE");
   }
   const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
   if (base64.length > 2_000_000) {
-    throw Object.assign(new Error("서명 이미지는 1.5MB 이하로 등록해주세요."), { status: 400 });
+    throw publicError(400, "서명 이미지는 1.5MB 이하로 등록해주세요.", "SIGNATURE_TOO_LARGE");
   }
   return base64;
 }
 
 async function requireHyundaiSignature(env, currentUser, actionLabel) {
   if (currentUser.org !== "hyundai") {
-    throw Object.assign(new Error(`현대건설 소속만 ${actionLabel}할 수 있습니다.`), { status: 403 });
+    throw publicError(403, `현대건설 소속만 ${actionLabel}할 수 있습니다.`, "FORBIDDEN");
   }
   const usersFile = await ghGetJson(env, "users.json");
   const users = usersFile ? usersFile.json : {};
   const signatureUrl = (users[currentUser.email] && users[currentUser.email].signatureUrl) || null;
   if (!signatureUrl) {
-    throw Object.assign(new Error("먼저 마이페이지에서 서명을 등록해주세요."), { status: 400 });
+    throw publicError(400, "먼저 마이페이지에서 서명을 등록해주세요.", "SIGNATURE_REQUIRED");
   }
   return signatureUrl;
 }
 
 function assertPlanInApproval(plan, actionLabel) {
   if (!["pending", "approving"].includes(plan.status)) {
-    throw Object.assign(new Error(`승인요청된 작업계획서만 ${actionLabel}할 수 있습니다.`), { status: 400 });
+    throw publicError(400, `승인요청된 작업계획서만 ${actionLabel}할 수 있습니다.`, "INVALID_PLAN_STATUS");
   }
 }
 
@@ -927,7 +1000,7 @@ async function handleSafetyApprove(request, env, id, currentUser, options = {}) 
   if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
   assertPlanInApproval(planFile.json, "안전팀 승인");
   if (planFile.json.safetyApproval) return json({ error: "이미 안전팀 승인이 완료되었습니다." }, 400, env);
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request, 64 * 1024, { allowEmpty: true });
   const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
   if (options.requireManager && !hyundaiManagerName) {
     return json({ error: "현대건설 상주관리자를 선택하거나 직접 입력해주세요." }, 400, env);
@@ -962,12 +1035,13 @@ async function handleRejectPlan(request, env, id, currentUser) {
   if (!["pending", "approving"].includes(planFile.json.status)) {
     return json({ error: "승인요청된 작업계획서만 반려할 수 있습니다." }, 400, env);
   }
-  const { reason, stage: requestedStage } = await request.json();
+  const { reason, stage: requestedStage } = await readJson(request);
+  const normalizedReason = normalizeText(reason, "반려 사유", 2000);
   // 기존 클라이언트의 단계 없는 /reject 요청은 종전 승인 단계인 안전팀 반려로 처리한다.
   const stage = requestedStage || "safety";
   if (!["execution", "safety"].includes(stage)) return json({ error: "잘못된 반려 단계입니다." }, 400, env);
   await updatePlanStatus(env, id, "draft", (plan) => {
-    plan.rejectReason = reason || "";
+    plan.rejectReason = normalizedReason;
     plan.rejectedAt = new Date().toISOString();
     plan.rejectedBy = currentUser.email;
     plan.rejectedByName = currentUser.name;
@@ -988,7 +1062,7 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
   if (!["pending", "approving", "approved"].includes(planFile.json.status)) {
     return json({ error: "승인요청 이후에만 상주관리자를 지정하거나 변경할 수 있습니다." }, 400, env);
   }
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request, 64 * 1024, { allowEmpty: true });
   const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
   if (!hyundaiManagerName) {
     return json({ error: "현대건설 상주관리자를 선택하거나 직접 입력해주세요." }, 400, env);
@@ -1019,7 +1093,7 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
 
 async function updatePlanStatus(env, id, status, mutatorFn) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
-  if (!file) throw Object.assign(new Error("작업계획서를 찾을 수 없습니다."), { status: 404 });
+  if (!file) throw publicError(404, "작업계획서를 찾을 수 없습니다.", "PLAN_NOT_FOUND");
   const plan = file.json;
   plan.status = status;
   plan.updatedAt = new Date().toISOString();
@@ -1078,6 +1152,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    if (!isAllowedOrigin(request, env)) {
+      return json({ error: "허용되지 않은 요청 출처입니다.", code: "ORIGIN_NOT_ALLOWED" }, 403, { ...env, SUPPRESS_CORS: true });
+    }
+    env = { ...env, RESPONSE_ORIGIN: request.headers.get("Origin") || allowedOrigins(env)[0] };
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(env) });
@@ -1150,7 +1229,12 @@ export default {
 
       return json({ error: "찾을 수 없는 요청입니다." }, 404, env);
     } catch (e) {
-      return json({ error: e.message || "서버 오류가 발생했습니다." }, e.status || 500, env);
+      if (e && e.expose) {
+        return json({ error: e.message, ...(e.code ? { code: e.code } : {}) }, e.status || 400, env);
+      }
+      const requestId = crypto.randomUUID();
+      console.error("Unhandled API error", { requestId, method: request.method, path, error: e && e.stack ? e.stack : String(e) });
+      return json({ error: "서버 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.", code: "INTERNAL_ERROR", requestId }, 500, env);
     }
   },
 };

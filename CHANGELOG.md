@@ -6,11 +6,17 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ### Changed
 
+- Avoid a second `users.json` read/write cycle when registration includes a signature.
 - Remove duplicated version-history headers from `index.html` and `worker/worker.js`; Git history and this changelog are the version record.
 - Remove the stale duplicate account-status test that referenced a retired versioned Worker source, restoring the documented Worker test command.
 
 ### Security
 
+- Remove the production test-login bypass and its frontend controls so all authentication uses Google token verification.
+- Prevent registration from overwriting any existing account or signature record.
+- Require configured frontend origins for browser API requests and reject untrusted origins before external calls.
+- Limit JSON request sizes, validate plan and registration field lengths and formats, and persist only allowed plan fields.
+- Hide internal GitHub and Worker error details behind traceable generic error responses.
 - Escape server-provided values in the home plan list, company filter, and plan detail view.
 - Escape existing plan, company, and manager values rendered in the plan edit form.
 - Escape user identity and company values rendered in the header, registration, my-page, and pending-user approval views.
