@@ -1616,8 +1616,8 @@ function pdfFit(value) {
   return `<div class="pdf-fit">${esc(value || "")}</div>`;
 }
 
-function approvalSignatureCell(approval, key) {
-  const signatureUrl = approval && approval.signatureUrl ? ` data-signature="${esc(approval.signatureUrl)}"` : "";
+function approvalSignatureCell(approval, key, shouldLookup = false) {
+  const signatureUrl = shouldLookup || (approval && approval.signatureUrl) ? " data-signature" : "";
   return `<td class="pdf-signature" id="pdf-signature-${key}" data-signature-key="${key}"${signatureUrl}></td>`;
 }
 
@@ -1684,7 +1684,7 @@ function planToTemplateHtml(plan) {
       <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
       <thead><tr><th colspan="2">작업요청/승인</th><th>서명</th><th>결재시간</th></tr></thead>
       <tbody>
-        <tr><td class="pdf-label">작성/요청<br>(협력업체)</td><td>${pdfFit(plan.writerName)}</td><td></td><td>${pdfFit(pdfDateTime(plan.submittedAt))}</td></tr>
+        <tr><td class="pdf-label">작성/요청<br>(협력업체)</td><td>${pdfFit(plan.writerName)}</td>${approvalSignatureCell(plan, "vendor", Boolean(plan.writerEmail))}<td>${pdfFit(pdfDateTime(plan.submittedAt))}</td></tr>
         <tr><td class="pdf-label">검토<br>(현대건설 수행팀)</td><td>${pdfFit(execution.reviewerName)}</td>${approvalSignatureCell(execution, "execution")}<td>${pdfFit(pdfDateTime(execution.reviewedAt))}</td></tr>
         <tr><td class="pdf-label">승인<br>(현대건설 안전팀)</td><td>${pdfFit(safety.approverName)}</td>${approvalSignatureCell(safety, "safety")}<td>${pdfFit(pdfDateTime(safety.approvedAt))}</td></tr>
       </tbody>
