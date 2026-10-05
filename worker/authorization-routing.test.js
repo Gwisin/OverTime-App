@@ -96,24 +96,31 @@ test("protected APIs reject unauthenticated requests with 401", async () => {
   });
 });
 
-test("plan signature API returns authenticated review and approval images", async () => {
+test("plan signature API returns vendor request, review, and approval images", async () => {
+  const users = {
+    ...approvedUsers,
+    "vendor@example.com": { ...approvedUsers["vendor@example.com"], signatureUrl: "signatures/vendor.png" },
+  };
   const files = {
     "data/plans/signed-plan.json": {
       id: "signed-plan",
       status: "approved",
+      writerEmail: "vendor@example.com",
       executionReview: { signatureUrl: "signatures/reviewer.png" },
       safetyApproval: { signatureUrl: "signatures/approver.jpg" },
     },
   };
   const rawFiles = {
+    "signatures/vendor.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01]),
     "signatures/reviewer.png": Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     "signatures/approver.jpg": Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
   };
-  await withMockFetch({ files, rawFiles }, async () => {
+  await withMockFetch({ users, files, rawFiles }, async () => {
     const response = await request("/api/plans/signed-plan/signatures");
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       signatures: {
+        vendor: "data:image/png;base64,iVBORwE=",
         execution: "data:image/png;base64,iVBORw==",
         safety: "data:image/jpeg;base64,/9j/4A==",
       },

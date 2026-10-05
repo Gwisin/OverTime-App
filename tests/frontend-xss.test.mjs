@@ -233,6 +233,7 @@ test("download template escapes resident manager and approval identities", () =>
     mitigations: attack,
     vendorManagerName: attack,
     hyundaiManagerName: attack,
+    writerEmail: "writer@example.com",
     writerName: attack,
     approval: { approverName: attack, approvedAt: "2026-10-03T01:00:00.000Z" },
   });
@@ -241,6 +242,7 @@ test("download template escapes resident manager and approval identities", () =>
   assert.match(rendered, /&lt;img/);
   assert.match(rendered, /<th>담당자<\/th>/);
   assert.ok(rendered.indexOf(">협력업체<") < rendered.indexOf(">현대건설<"));
+  assert.match(rendered, /data-signature-key="vendor" data-signature/);
 });
 
 test("printable plan uses equal page margins and a safe work-date filename", () => {

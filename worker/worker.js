@@ -743,15 +743,19 @@ async function handleGetPlanSignatures(env, id) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
   const plan = file.json;
+  const usersFile = plan.writerEmail ? await ghGetJson(env, "users.json") : null;
+  const vendorPath = usersFile && usersFile.json[plan.writerEmail] && usersFile.json[plan.writerEmail].signatureUrl;
   const executionPath = plan.executionReview && plan.executionReview.signatureUrl;
   const safetyApproval = plan.safetyApproval || (plan.status === "approved" ? plan.approval : null);
   const safetyPath = safetyApproval && safetyApproval.signatureUrl;
-  const [execution, safety] = await Promise.all([
+  const [vendor, execution, safety] = await Promise.all([
+    vendorPath ? ghGetBinaryBase64(env, vendorPath) : null,
     executionPath ? ghGetBinaryBase64(env, executionPath) : null,
     safetyPath ? ghGetBinaryBase64(env, safetyPath) : null,
   ]);
   return json({
     signatures: {
+      vendor: signatureDataUrl(vendor),
       execution: signatureDataUrl(execution),
       safety: signatureDataUrl(safety),
     },
