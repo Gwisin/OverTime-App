@@ -985,7 +985,13 @@ async function handleExecutionReview(request, env, id, currentUser, usersFile) {
   if (!planFile) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
   assertPlanInApproval(planFile.json, "수행팀 검토");
   if (planFile.json.executionReview) return json({ error: "이미 수행팀 검토가 완료되었습니다." }, 400, env);
+  const body = await readJson(request, 64 * 1024, { allowEmpty: true });
+  const hyundaiManagerName = normalizeManagerName(body.hyundaiManagerName, "현대건설 상주관리자");
   await updatePlanStatus(env, id, planFile.json.safetyApproval ? "approved" : "approving", (plan) => {
+    if (hyundaiManagerName) {
+      plan.hyundaiManagerEmail = normalizeManagerEmail(body.hyundaiManagerEmail);
+      plan.hyundaiManagerName = hyundaiManagerName;
+    }
     plan.executionReview = {
       reviewerEmail: currentUser.email,
       reviewerName: currentUser.name,

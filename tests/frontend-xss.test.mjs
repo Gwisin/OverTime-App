@@ -142,9 +142,10 @@ test("pending detail uses in-progress labels and paired approval actions", async
   assert.doesNotMatch(container.innerHTML, /미검토|미승인|대기중/);
   assert.match(container.innerHTML, /수행팀 결재[\s\S]*안전팀 결재[\s\S]*수행팀 반려[\s\S]*안전팀 반려/);
   assert.doesNotMatch(container.innerHTML, /detail(?:Execution|Safety)RejectButton" class="block"/);
+  assert.match(container.innerHTML, /2026\.10\.18\(일\)[\s\S]*11:30~13:00 · [\s\S]*점심/);
 });
 
-test("safety approval sends the selected Hyundai resident manager", async () => {
+test("each approval action sends the selected Hyundai resident manager", async () => {
   const requests = [];
   const select = {
     value: "manager@hyundai.com",
@@ -160,14 +161,18 @@ test("safety approval sends the selected Hyundai resident manager", async () => 
     document: { getElementById: (id) => id === "approveManager" ? select : null },
   });
 
+  await context.completeApprovalStep("plan-1", "execution");
   await context.completeApprovalStep("plan-1", "safety");
 
-  assert.equal(requests.length, 1);
-  assert.match(requests[0].url, /\/api\/plans\/plan-1\/safety-approve$/);
-  assert.deepEqual(JSON.parse(requests[0].init.body), {
-    hyundaiManagerEmail: "manager@hyundai.com",
-    hyundaiManagerName: "현대 현장소장",
-  });
+  assert.equal(requests.length, 2);
+  assert.match(requests[0].url, /\/api\/plans\/plan-1\/execution-review$/);
+  assert.match(requests[1].url, /\/api\/plans\/plan-1\/safety-approve$/);
+  for (const request of requests) {
+    assert.deepEqual(JSON.parse(request.init.body), {
+      hyundaiManagerEmail: "manager@hyundai.com",
+      hyundaiManagerName: "현대 현장소장",
+    });
+  }
 });
 
 test("edit form escapes stored plan and manager values", async () => {

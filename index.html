@@ -114,7 +114,7 @@
 
   .approval-step { display: flex; align-items: baseline; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
   .approval-step .step-label { flex: 0 0 52px; font-weight: 600; white-space: nowrap; }
-  .approval-step .step-name { flex: 1 1 auto; min-width: 0; }
+  .approval-step .step-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .approval-step .step-status { margin-left: auto; text-align: right; white-space: nowrap; color: var(--sub); }
   .approval-step:last-child { border-bottom: none; }
 
@@ -431,12 +431,8 @@ function renderRegister() {
         <canvas id="regSigPad" class="signature-canvas" width="700" height="220" aria-label="서명 입력 영역"></canvas>
         <div class="row" style="margin-top:10px;">
           <button type="button" onclick="clearRegisterSignature()">지우기</button>
-          <label style="margin:0;">
-            <input id="regSigFile" class="hidden" type="file" accept="image/png,image/jpeg" onchange="loadRegisterSignatureFile(this)" />
-            <span class="button-like">이미지 선택</span>
-          </label>
         </div>
-        <div id="regSigMsg" class="muted" style="margin-top:8px;">직접 서명하거나 서명 이미지를 선택해주세요.</div>
+        <div id="regSigMsg" class="muted" style="margin-top:8px;">위 영역에 직접 서명해주세요.</div>
       </div>
       <div id="regError" class="error-text"></div>
       <button class="primary block" onclick="submitRegister()">가입 신청</button>
@@ -494,35 +490,7 @@ function clearRegisterSignature() {
   const canvas = document.getElementById("regSigPad");
   if (canvas && regSigCtx) regSigCtx.clearRect(0, 0, canvas.width, canvas.height);
   regSigHasContent = false;
-  const file = document.getElementById("regSigFile");
-  if (file) file.value = "";
-  document.getElementById("regSigMsg").textContent = "직접 서명하거나 서명 이미지를 선택해주세요.";
-}
-
-function loadRegisterSignatureFile(input) {
-  const file = input.files[0];
-  if (!file) return;
-  if (!['image/png', 'image/jpeg'].includes(file.type)) {
-    input.value = "";
-    document.getElementById("regSigMsg").textContent = "PNG 또는 JPG 이미지만 선택할 수 있습니다.";
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.getElementById("regSigPad");
-      regSigCtx.clearRect(0, 0, canvas.width, canvas.height);
-      const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
-      const width = image.width * scale;
-      const height = image.height * scale;
-      regSigCtx.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-      regSigHasContent = true;
-      document.getElementById("regSigMsg").textContent = `${file.name} 이미지가 적용되었습니다.`;
-    };
-    image.src = reader.result;
-  };
-  reader.readAsDataURL(file);
+  document.getElementById("regSigMsg").textContent = "위 영역에 직접 서명해주세요.";
 }
 
 async function submitRegister() {
@@ -982,8 +950,11 @@ async function loadDetail(container, planId) {
 
     container.innerHTML = `
       <div class="card">
-        <div class="top" style="display:flex;justify-content:space-between;">
-          <h2>${esc(formatDateTimeDisplay(plan.workDate, plan.workTimeStart, plan.workTimeEnd))} · ${esc(plan.workType)}</h2>
+        <div class="top" style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+          <div style="min-width:0;">
+            <h2 style="margin-bottom:4px;">${esc(formatDateLabel(plan.workDate))}</h2>
+            <div class="time" style="color:var(--sub);">${plan.workTimeStart && plan.workTimeEnd ? `${esc(plan.workTimeStart)}~${esc(plan.workTimeEnd)} · ` : ""}<span style="font-weight:600;color:var(--text);">${esc(plan.workType)}</span></div>
+          </div>
           <span class="badge ${statusClass}">${esc(statusLabel)}</span>
         </div>
         <p class="muted">${esc(plan.company)}</p>
@@ -1078,13 +1049,10 @@ async function completeApprovalStep(id, stage) {
   try {
     const isExecution = stage === "execution";
     const label = isExecution ? "수행팀 검토" : "안전팀 승인";
-    let body;
-    if (!isExecution) {
-      const sel = document.getElementById("approveManager");
-      const manager = selectedManager(sel, "approveManagerManual");
-      if (!manager.name) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
-      body = { hyundaiManagerEmail: manager.email, hyundaiManagerName: manager.name };
-    }
+    const sel = document.getElementById("approveManager");
+    const manager = selectedManager(sel, "approveManagerManual");
+    if (!manager.name) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
+    const body = { hyundaiManagerEmail: manager.email, hyundaiManagerName: manager.name };
     if (!confirm(`${label}를 완료하시겠습니까?`)) return;
     const action = isExecution ? "execution-review" : "safety-approve";
     await api(`/api/plans/${encodeURIComponent(id)}/${action}`, { method: "POST", body });
@@ -1129,25 +1097,18 @@ function renderMyPage() {
       <p class="muted">${esc(state.user.name)} · ${esc(state.user.company)} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
     </div>
     <div class="card">
-      <h2>내 서명 등록</h2>
+      <h2>내 서명</h2>
       <div id="sigPreview"></div>
-      <div class="tabs">
-        <button id="tabDraw" class="active" onclick="switchSigTab('draw')">그려서 등록</button>
-        <button id="tabUpload" onclick="switchSigTab('upload')">이미지 업로드</button>
-      </div>
-      <div id="sigDrawArea">
+      <div id="sigDrawArea" class="${state.user.signatureUrl ? "hidden" : ""}">
         <canvas id="sigPad" class="signature-canvas" width="700" height="220"></canvas>
         <div class="row" style="margin-top:10px;">
           <button onclick="clearSignaturePad()">지우기</button>
-          <button class="primary" onclick="saveSignatureFromCanvas()">서명 저장</button>
+          ${state.user.signatureUrl ? `<button onclick="cancelSignatureChange()">취소</button>` : ""}
+          <button class="primary" onclick="saveSignatureFromCanvas()">${state.user.signatureUrl ? "변경 저장" : "서명 저장"}</button>
         </div>
       </div>
-      <div id="sigUploadArea" class="hidden">
-        <input type="file" id="sigFile" accept="image/*" />
-        <button class="primary block" onclick="saveSignatureFromFile()">서명 저장</button>
-      </div>
       <div id="sigMsg" class="muted" style="margin-top:8px;"></div>
-      ${state.user.signatureUrl ? `<p class="muted">현재 등록된 서명이 있습니다.</p>` : `<p class="muted">등록된 서명이 없습니다. 승인 기능을 사용하려면 서명을 등록해주세요.</p>`}
+      ${state.user.signatureUrl ? `<button id="changeSignatureButton" class="block" onclick="beginSignatureChange()">서명 변경</button>` : `<p class="muted">등록된 서명이 없습니다. 승인 기능을 사용하려면 서명을 등록해주세요.</p>`}
     </div>
     <div class="card">
       <h2>작업계획서 일괄 출력(ZIP)</h2>
@@ -1179,11 +1140,15 @@ async function loadMySignature() {
   }
 }
 
-function switchSigTab(tab) {
-  document.getElementById("tabDraw").className = tab === "draw" ? "active" : "";
-  document.getElementById("tabUpload").className = tab === "upload" ? "active" : "";
-  document.getElementById("sigDrawArea").classList.toggle("hidden", tab !== "draw");
-  document.getElementById("sigUploadArea").classList.toggle("hidden", tab !== "upload");
+function beginSignatureChange() {
+  document.getElementById("sigDrawArea").classList.remove("hidden");
+  document.getElementById("changeSignatureButton").classList.add("hidden");
+}
+function cancelSignatureChange() {
+  clearSignaturePad();
+  document.getElementById("sigDrawArea").classList.add("hidden");
+  document.getElementById("changeSignatureButton").classList.remove("hidden");
+  document.getElementById("sigMsg").textContent = "";
 }
 
 let sigCtx, sigDrawing = false;
@@ -1219,19 +1184,12 @@ async function saveSignatureFromCanvas() {
   const dataUrl = canvas.toDataURL("image/png");
   await uploadSignature(dataUrl);
 }
-async function saveSignatureFromFile() {
-  const fileInput = document.getElementById("sigFile");
-  if (!fileInput.files[0]) return alert("파일을 선택해주세요.");
-  const reader = new FileReader();
-  reader.onload = async () => await uploadSignature(reader.result);
-  reader.readAsDataURL(fileInput.files[0]);
-}
 async function uploadSignature(dataUrl) {
   try {
     await api("/api/signature", { method: "POST", body: { imageBase64: dataUrl } });
     document.getElementById("sigMsg").textContent = "서명이 저장되었습니다.";
     state.user.signatureUrl = "saved";
-    await loadMySignature();
+    render();
   } catch (e) {
     document.getElementById("sigMsg").textContent = e.message;
   }
