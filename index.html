@@ -16,7 +16,6 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
@@ -1113,10 +1112,12 @@ function renderMyPage() {
     <div class="card">
       <h2>작업계획서 일괄 출력(ZIP)</h2>
       <div class="row">
-        <input type="date" id="batchFrom" />
+        <input type="date" id="batchFrom" onchange="updateBatchDateLimit()" />
         <input type="date" id="batchTo" />
       </div>
-      <button class="block" onclick="batchDownload()">작업계획서 일괄 출력(ZIP)</button>
+      <p class="muted">다운로드 기간은 시작일을 포함해 최대 1개월입니다.</p>
+      <button id="batchDownloadButton" class="block" onclick="batchDownload()">작업계획서 일괄 출력(ZIP)</button>
+      <div id="batchDownloadProgress" class="muted" role="status" aria-live="polite"></div>
     </div>`;
   setTimeout(setupSignaturePad, 0);
   setTimeout(loadMySignature, 0);
@@ -1653,16 +1654,20 @@ function fitPdfText(container) {
   });
 }
 
-async function withManagerContacts(plan) {
+async function withManagerContacts(plan, cache = new Map()) {
+  const managersFor = (path) => {
+    if (!cache.has(path)) cache.set(path, api(path));
+    return cache.get(path);
+  };
   const result = { ...plan, vendorManagerPhone: "", hyundaiManagerPhone: "" };
   const lookups = [];
   if (plan.vendorManagerEmail) {
-    lookups.push(api(`/api/managers?org=vendor&company=${encodeURIComponent(plan.company || "")}`)
+    lookups.push(managersFor(`/api/managers?org=vendor&company=${encodeURIComponent(plan.company || "")}`)
       .then(({ managers }) => { result.vendorManagerPhone = managers.find((m) => m.email === plan.vendorManagerEmail)?.phone || ""; })
       .catch(() => {}));
   }
   if (plan.hyundaiManagerEmail) {
-    lookups.push(api("/api/managers?org=hyundai")
+    lookups.push(managersFor("/api/managers?org=hyundai")
       .then(({ managers }) => { result.hyundaiManagerPhone = managers.find((m) => m.email === plan.hyundaiManagerEmail)?.phone || ""; })
       .catch(() => {}));
   }
@@ -1670,20 +1675,117 @@ async function withManagerContacts(plan) {
   return result;
 }
 
-async function renderPlanToCanvas(plan) {
-  const container = document.getElementById("pdf-template");
-  container.innerHTML = planToTemplateHtml(await withManagerContacts(plan));
-  await addPdfSignatures(container, plan.id);
-  if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
-  fitPdfText(container);
-  const canvas = await html2canvas(container.firstElementChild, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-  container.innerHTML = "";
-  return canvas;
+// Load the bundled fonts once; jsPDF subsets them to the glyphs used in each PDF.
+let pdfFontsPromise;
+async function loadPdfFonts() {
+  if (!pdfFontsPromise) {
+    pdfFontsPromise = Promise.all(["Regular", "Bold"].map(async (weight) => {
+      const response = await fetch(`assets/fonts/NanumGothic-${weight}.ttf`);
+      if (!response.ok) throw new Error("PDF 한글 폰트를 불러오지 못했습니다. 다시 시도해주세요.");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      return btoa(binary);
+    })).catch((error) => { pdfFontsPromise = null; throw error; });
+  }
+  return pdfFontsPromise;
 }
 
-function canvasToA4Pdf(canvas) {
-  const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
-  pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", 0, 0, 210, 297, undefined, "FAST");
+function drawPdfCell(pdf, text, x, y, width, height, { shaded = false, centered = false, size = 10.5, bold = false } = {}) {
+  pdf.setDrawColor(68);
+  pdf.setLineWidth(0.35);
+  pdf.setFillColor(shaded ? 213 : 255);
+  pdf.rect(x, y, width, height, "FD");
+  pdf.setFont("NanumGothic", bold ? "bold" : "normal");
+  pdf.setTextColor(0);
+  const content = String(text ?? "").replace(/\r\n?/g, "\n");
+  const availableWidth = width - 5;
+  const availableHeight = height - 3;
+  let lines, lineHeight;
+  // Never silently crop long content. Reduce to a readable minimum, then report it.
+  for (;;) {
+    pdf.setFontSize(size);
+    lines = pdf.splitTextToSize(content, availableWidth);
+    lineHeight = size * 25.4 / 72 * 1.25;
+    if (lines.length * lineHeight <= availableHeight && lines.every((line) => pdf.getTextWidth(line) <= availableWidth + 0.01)) break;
+    if (size <= 7) throw new Error("계획서 내용이 PDF 칸에 들어가지 않습니다. 내용을 줄인 후 다시 출력해주세요.");
+    size = Math.max(7, size - 0.5);
+  }
+  if (content) pdf.text(lines, centered ? x + width / 2 : x + 2.5,
+    y + (height - lines.length * lineHeight) / 2 + size * 25.4 / 72 * 0.85,
+    { align: centered ? "center" : "left", lineHeightFactor: 1.25 });
+}
+
+async function createPlanPdf(sourcePlan, managerCache) {
+  const [fonts, plan] = await Promise.all([loadPdfFonts(), withManagerContacts(sourcePlan, managerCache)]);
+  const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true, putOnlyUsedFonts: true });
+  ["normal", "bold"].forEach((style, index) => {
+    const filename = `NanumGothic-${style}.ttf`;
+    pdf.addFileToVFS(filename, fonts[index]);
+    pdf.addFont(filename, "NanumGothic", style);
+  });
+  pdf.setProperties({ title: safePdfFileBase(plan) });
+  const label = { shaded: true, centered: true, bold: true, size: 12 };
+  const cell = (text, x, y, width, height, options) => drawPdfCell(pdf, text, x, y, width, height, options);
+  cell(`보충작업계획서(${plan.workType || ""})`, 10, 10, 190, 15, { ...label, size: 17 });
+  let y = 25;
+  const mainRow = (a, b, c, d, height) => {
+    cell(a, 10, y, 28.5, height, label);
+    cell(b, 38.5, y, 66.5, height);
+    cell(c, 105, y, 28.5, height, label);
+    cell(d, 133.5, y, 66.5, height);
+    y += height;
+  };
+  mainRow("현장", PDF_SITE_NAME, "업체명", plan.company, 12);
+  mainRow("작업일자", formatDateLabel(plan.workDate), "작업시간", plan.workTimeStart && plan.workTimeEnd ? `${plan.workTimeStart}~${plan.workTimeEnd}` : "", 12);
+  mainRow("작업\n장소/내용", plan.workLocation, "작업\n인원/장비", plan.workforceEquipment, 45);
+  mainRow("위험요인", plan.hazards, "저감대책", plan.mitigations, 47);
+  y += 3;
+  cell("상주관리감독자", 10, y, 190, 12, { ...label, size: 14 });
+  y += 12;
+  const supervisorRow = (values, height, header = false) => {
+    let x = 10;
+    [47.5, 85.5, 57].forEach((width, i) => {
+      cell(values[i], x, y, width, height, header || i === 0 ? label : { centered: true });
+      x += width;
+    });
+    y += height;
+  };
+  supervisorRow(["구분", "담당자", "연락처"], 10, true);
+  supervisorRow(["협력업체", plan.vendorManagerName, plan.vendorManagerPhone], 11);
+  supervisorRow(["현대건설", plan.hyundaiManagerName, plan.hyundaiManagerPhone], 11);
+  y += 3;
+  cell("작업요청/승인", 10, y, 95, 11, label);
+  cell("서명", 105, y, 47.5, 11, label);
+  cell("결재시간", 152.5, y, 47.5, 11, label);
+  y += 11;
+  const execution = plan.executionReview || {};
+  const safety = plan.safetyApproval || (plan.status === "approved" ? plan.approval || {} : {});
+  let signatures = {};
+  if (plan.id && (plan.writerEmail || execution.signatureUrl || safety.signatureUrl)) {
+    const result = await api(`/api/plans/${encodeURIComponent(plan.id)}/signatures`);
+    signatures = result.signatures || {};
+  }
+  const approvals = [
+    ["작성/요청\n(협력업체)", plan.writerName, plan.submittedAt, "vendor"],
+    ["검토\n(현대건설 수행팀)", execution.reviewerName, execution.reviewedAt, "execution"],
+    ["승인\n(현대건설 안전팀)", safety.approverName, safety.approvedAt, "safety"]
+  ];
+  for (const [role, name, time, key] of approvals) {
+    cell(role, 10, y, 47.5, 13, { ...label, size: 10.5 });
+    cell(name, 57.5, y, 47.5, 13, { centered: true });
+    cell("", 105, y, 47.5, 13);
+    cell(pdfDateTime(time), 152.5, y, 47.5, 13, { centered: true });
+    if (signatures[key]) {
+      const image = pdf.getImageProperties(signatures[key]);
+      const scale = Math.min(43.5 / image.width, 10 / image.height);
+      const width = image.width * scale, height = image.height * scale;
+      pdf.addImage(signatures[key], image.fileType, 105 + (47.5 - width) / 2, y + (13 - height) / 2, width, height);
+    }
+    y += 13;
+  }
   return pdf;
 }
 
@@ -1746,44 +1848,92 @@ async function openPlanPdf(id) {
   const preview = window.open("", "_blank");
   if (!preview) return alert("PDF 미리보기 새 탭을 열 수 없습니다. 브라우저의 팝업 차단을 해제해주세요.");
   preview.document.write("<!doctype html><title>작업계획서 PDF 준비 중</title><p style='font-family:sans-serif;padding:24px'>작업계획서 PDF를 준비하고 있습니다...</p>");
+  preview.document.close();
   try {
     const data = await api("/api/plans/" + encodeURIComponent(id));
-    const plan = await withManagerContacts(data.plan);
-    preview.document.open();
-    preview.document.write(printablePlanDocument(plan));
-    preview.document.close();
-    await addPdfSignatures(preview.document, plan.id);
-    await waitForPrintAssets(preview.document);
-    fitPdfText(preview.document);
-    preview.focus();
-    preview.print();
+    const pdf = await createPlanPdf(data.plan);
+    const url = URL.createObjectURL(pdf.output("blob"));
+    preview.location.replace(url);
+    setTimeout(() => URL.revokeObjectURL(url), 300000);
   } catch (e) {
     preview.close();
     alert(e.message);
   }
 }
 
+// Inclusive month window: Oct 6–Nov 5, Jan 1–Jan 31; clamp month ends.
+function batchDateMax(from) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return "";
+  const start = new Date(`${from}T00:00:00Z`);
+  if (!Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== from) return "";
+  const year = start.getUTCFullYear(), month = start.getUTCMonth(), day = start.getUTCDate();
+  const nextMonthLastDay = new Date(Date.UTC(year, month + 2, 0)).getUTCDate();
+  const end = new Date(Date.UTC(year, month + 1, Math.min(day, nextMonthLastDay)));
+  end.setUTCDate(end.getUTCDate() - 1);
+  return end.toISOString().slice(0, 10);
+}
+
+function updateBatchDateLimit() {
+  const from = document.getElementById("batchFrom").value;
+  const to = document.getElementById("batchTo");
+  to.min = from;
+  to.max = batchDateMax(from);
+}
+
+let batchDownloadInProgress = false;
 async function batchDownload() {
+  if (batchDownloadInProgress) return;
   const from = document.getElementById("batchFrom").value;
   const to = document.getElementById("batchTo").value;
   if (!from || !to) return alert("기간을 선택해주세요.");
+  const max = batchDateMax(from);
+  if (!max || !batchDateMax(to)) return alert("올바른 날짜를 선택해주세요.");
+  if (to < from) return alert("종료일은 시작일보다 빠를 수 없습니다.");
+  if (to > max) return alert(`다운로드 기간은 최대 1개월입니다. 종료일을 ${max} 이내로 선택해주세요.`);
+  const button = document.getElementById("batchDownloadButton");
+  const progress = document.getElementById("batchDownloadProgress");
+  batchDownloadInProgress = true;
+  if (button) button.disabled = true;
+  if (progress) progress.textContent = "계획서 목록을 불러오는 중...";
   try {
     const data = await api(`/api/plans?from=${from}&to=${to}`);
-    if (data.plans.length === 0) return alert("해당 기간에 작업계획서가 없습니다.");
-    const zip = new JSZip();
-    for (const p of data.plans) {
-      const detail = await api("/api/plans/" + encodeURIComponent(p.id));
-      const canvas = await renderPlanToCanvas(detail.plan);
-      const pdf = canvasToA4Pdf(canvas);
-      zip.file(`${p.id}.pdf`, pdf.output("blob"));
+    if (data.plans.length === 0) {
+      if (progress) progress.textContent = "해당 기간에 작업계획서가 없습니다.";
+      return;
     }
+    const zip = new JSZip();
+    const managerCache = new Map();
+    let done = 0;
+    for (const p of data.plans) {
+      if (progress) progress.textContent = `PDF 생성 중 (${done + 1}/${data.plans.length})`;
+      const detail = await api("/api/plans/" + encodeURIComponent(p.id));
+      try {
+        const pdf = await createPlanPdf(detail.plan, managerCache);
+        zip.file(`${p.id}.pdf`, pdf.output("arraybuffer"));
+      } catch (e) {
+        throw new Error(`${safePdfFileBase(detail.plan)}: ${e.message}`);
+      }
+      done += 1;
+      // Yield between documents so progress updates remain visible.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (progress) progress.textContent = "ZIP 파일을 준비하는 중...";
     const blob = await zip.generateAsync({ type: "blob" });
     const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
     link.download = `작업계획서_${from}_${to}.zip`;
-    link.href = URL.createObjectURL(blob);
+    link.href = url;
+    document.body.appendChild(link);
     link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (progress) progress.textContent = `${done}건 다운로드 준비 완료`;
   } catch (e) {
+    if (progress) progress.textContent = "다운로드를 완료하지 못했습니다.";
     alert(e.message);
+  } finally {
+    batchDownloadInProgress = false;
+    if (button) button.disabled = false;
   }
 }
 
