@@ -40,6 +40,17 @@ test("manager lookup returns contact details to ADMIN users", async () => {
   });
 });
 
+test("protected handlers reuse the users file loaded for authorization", async () => {
+  await withMockFetch({}, async (calls) => {
+    const response = await request("/api/managers?org=vendor&company=" + encodeURIComponent("협력사"));
+    assert.equal(response.status, 200);
+    const usersGets = calls.filter(({ method, url }) =>
+      method === "GET" && decodeURIComponent(url.pathname).endsWith("/contents/users.json")
+    );
+    assert.equal(usersGets.length, 1);
+  });
+});
+
 function githubContent(value, sha = "sha") {
   return { sha, content: Buffer.from(JSON.stringify(value)).toString("base64") };
 }
@@ -124,6 +135,25 @@ test("vendors can browse all plan summaries but only open their own company deta
     const forbidden = await request("/api/plans/other-plan");
     assert.equal(forbidden.status, 403);
     assert.equal((await forbidden.json()).code, "PLAN_DETAIL_FORBIDDEN");
+  });
+});
+
+test("plan list GET does not backfill legacy summaries or write stored data", async () => {
+  const legacySummary = { id: "legacy-plan", company: "협력사", status: "approved", workDate: "2026-10-01" };
+  const files = {
+    "data/index.json": [legacySummary],
+    "data/plans/legacy-plan.json": {
+      ...legacySummary,
+      writerName: "Legacy Writer",
+      approval: { approverName: "Legacy Approver" },
+    },
+  };
+  await withMockFetch({ files }, async (calls) => {
+    const response = await request("/api/plans");
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { plans: [legacySummary] });
+    assert.equal(calls.some(({ method }) => method === "PUT" || method === "DELETE"), false);
+    assert.equal(calls.some(({ url }) => decodeURIComponent(url.pathname).endsWith("/contents/data/plans/legacy-plan.json")), false);
   });
 });
 
