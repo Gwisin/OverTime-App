@@ -404,15 +404,32 @@ async function handleCompanies(request, env) {
   return json({ companies: Array.from(set).sort() }, 200, env);
 }
 
-async function handleManagers(request, env, url) {
+async function handleManagers(request, env, url, currentUser) {
   const org = url.searchParams.get("org");
   const company = url.searchParams.get("company");
   const usersFile = await ghGetJson(env, "users.json");
   const users = usersFile ? usersFile.json : {};
   const list = Object.entries(users)
     .filter(([email, u]) => u.status === "approved" && effectiveOrg(env, email, u) === org && (!company || u.company === company))
-    .map(([email, u]) => ({ email, name: u.name, company: u.company, phone: u.phone || "" }));
+    // 연락처 원문은 ADMIN 사용자 관리 기능에서만 제공한다. 기존 필드는 유지해
+    // 오래된 클라이언트도 응답을 안전하게 처리할 수 있도록 빈 문자열로 마스킹한다.
+    .map(([email, u]) => ({
+      email: currentUser.isAdmin ? email : "",
+      name: u.name,
+      company: u.company,
+      phone: currentUser.isAdmin ? u.phone || "" : "",
+    }));
   return json({ managers: list }, 200, env);
+}
+
+function auditLog(action, currentUser, target, details = {}) {
+  console.info("AUDIT", {
+    action,
+    actor: currentUser.email,
+    actorTier: currentUser.tier,
+    target,
+    ...details,
+  });
 }
 
 async function handlePendingUsers(request, env) {
@@ -436,8 +453,9 @@ async function handleApproveUser(request, env, approverEmail) {
       users[email].approvedAt = new Date().toISOString();
       return users;
     },
-    `가입승인 처리: ${email} by ${approverEmail}`
+    `audit user.registration.${approve ? "approve" : "reject"} target=${email} actor=${approverEmail}`
   );
+  console.info("AUDIT", { action: approve ? "user.registration.approve" : "user.registration.reject", actor: approverEmail, target: email });
   return json({ ok: true }, 200, env);
 }
 
@@ -493,10 +511,11 @@ async function handleAdminListUsers(env) {
   return json({ users: list }, 200, env);
 }
 
-async function handleAdminSignature(env, url) {
+async function handleAdminSignature(env, url, currentUser) {
   const email = url.searchParams.get("email");
   const f = await ghGetJson(env, "users.json");
   const dataUrl = await getSignatureDataUrl(env, f ? f.json : {}, email);
+  auditLog("user.signature.read", currentUser, email);
   return json({ dataUrl }, 200, env);
 }
 
@@ -513,8 +532,9 @@ async function handleAdminUpdateUser(request, env, currentUser) {
       if (phone !== undefined) users[email].phone = String(phone).trim();
       return users;
     },
-    `사용자 정보 수정: ${email} by ${currentUser.email}`
+    `audit user.update target=${email} actor=${currentUser.email}`
   );
+  auditLog("user.update", currentUser, email, { fields: [name !== undefined ? "name" : null, phone !== undefined ? "phone" : null].filter(Boolean) });
   return json({ ok: true }, 200, env);
 }
 
@@ -607,10 +627,12 @@ async function handleAdminRenameUser(request, env, currentUser) {
         currentUsers[email].name = name;
         return currentUsers;
       },
-      `사용자 이름 변경: ${email} by ${currentUser.email}`
+      `audit user.rename target=${email} actor=${currentUser.email}`
     );
     userUpdated = true;
   }
+
+  auditLog("user.rename", currentUser, email, { plansUpdated, remaining, userUpdated });
 
   return json({ ok: true, plansUpdated, remaining, nextCursor, userUpdated }, 200, env);
 }
@@ -630,8 +652,9 @@ async function handleAdminSetStatus(request, env, currentUser) {
       users[email].status = status;
       return users;
     },
-    `이용 상태 변경(${status}): ${email} by ${currentUser.email}`
+    `audit user.status.${status} target=${email} actor=${currentUser.email}`
   );
+  auditLog(`user.status.${status}`, currentUser, email);
   return json({ ok: true }, 200, env);
 }
 
@@ -654,8 +677,9 @@ async function handleAdminDeleteUser(request, env, currentUser) {
       delete users[email];
       return users;
     },
-    `사용자 삭제: ${email} by ${currentUser.email}`
+    `audit user.delete target=${email} actor=${currentUser.email}`
   );
+  auditLog("user.delete", currentUser, email);
   return json({ ok: true }, 200, env);
 }
 
@@ -725,10 +749,12 @@ async function handleAdminRenameCompany(request, env, currentUser) {
           });
           return us;
         },
-        `회사명 변경: ${from} → ${to} by ${currentUser.email}`
+        `audit company.rename target=${from} actor=${currentUser.email}`
       );
     }
   }
+
+  auditLog("company.rename", currentUser, from, { to, plansUpdated: batch.length, usersUpdated, remaining });
 
   return json({ ok: true, usersUpdated, plansUpdated: batch.length, remaining }, 200, env);
 }
@@ -790,9 +816,17 @@ async function handleListPlans(request, env, url, currentUser) {
   return json({ plans: list }, 200, env);
 }
 
-async function handleGetPlan(request, env, id) {
+function assertCanReadPlanDetail(currentUser, plan) {
+  const isWriter = plan.writerEmail && plan.writerEmail === currentUser.email;
+  if (currentUser.org !== "hyundai" && !currentUser.isAdmin && plan.company !== currentUser.company && !isWriter) {
+    throw publicError(403, "다른 업체의 작업계획서 상세는 조회할 수 없습니다.", "PLAN_DETAIL_FORBIDDEN");
+  }
+}
+
+async function handleGetPlan(request, env, id, currentUser) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
+  assertCanReadPlanDetail(currentUser, file.json);
   return json({ plan: file.json }, 200, env);
 }
 
@@ -802,10 +836,11 @@ function signatureDataUrl(base64) {
   return `data:${mime};base64,${base64}`;
 }
 
-async function handleGetPlanSignatures(env, id) {
+async function handleGetPlanSignatures(env, id, currentUser) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
   const plan = file.json;
+  assertCanReadPlanDetail(currentUser, plan);
   const usersFile = plan.writerEmail ? await ghGetJson(env, "users.json") : null;
   const vendorPath = usersFile && usersFile.json[plan.writerEmail] && usersFile.json[plan.writerEmail].signatureUrl;
   const executionPath = plan.executionReview && plan.executionReview.signatureUrl;
@@ -816,6 +851,7 @@ async function handleGetPlanSignatures(env, id) {
     executionPath ? ghGetBinaryBase64(env, executionPath) : null,
     safetyPath ? ghGetBinaryBase64(env, safetyPath) : null,
   ]);
+  auditLog("plan.signatures.read", currentUser, id);
   return json({
     signatures: {
       vendor: signatureDataUrl(vendor),
@@ -942,7 +978,7 @@ async function handleSubmitPlan(request, env, id, currentUser) {
     delete plan.rejectedByName;
     delete plan.rejectedStage;
     delete plan.rejectReason;
-  });
+  }, currentUser, "plan.submit");
   return json({ ok: true }, 200, env);
 }
 
@@ -990,7 +1026,7 @@ async function handleExecutionReview(request, env, id, currentUser) {
       reviewedAt: new Date().toISOString(),
     };
     if (plan.safetyApproval) plan.approval = { ...plan.safetyApproval };
-  });
+  }, currentUser, "plan.execution_review");
   return json({ ok: true }, 200, env);
 }
 
@@ -1018,7 +1054,7 @@ async function handleSafetyApprove(request, env, id, currentUser, options = {}) 
     };
     // 최종 승인 시 기존 단일 승인 필드도 유지해 기존 API와 다운로드 양식의 호환성을 보존한다.
     if (plan.executionReview) plan.approval = { ...plan.safetyApproval };
-  });
+  }, currentUser, "plan.safety_approve");
   return json({ ok: true }, 200, env);
 }
 
@@ -1049,7 +1085,7 @@ async function handleRejectPlan(request, env, id, currentUser) {
     delete plan.executionReview;
     delete plan.safetyApproval;
     delete plan.approval;
-  });
+  }, currentUser, "plan.reject");
   return json({ ok: true }, 200, env);
 }
 
@@ -1074,7 +1110,7 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
     hyundaiManagerName,
     updatedAt: now,
   };
-  await ghPutJson(env, `data/plans/${id}.json`, plan, planFile.sha, `현대건설 상주관리자 지정/변경: ${id}`);
+  await ghPutJson(env, `data/plans/${id}.json`, plan, planFile.sha, `audit plan.manager_change target=${id} actor=${currentUser.email}`);
   await updateJsonWithRetry(
     env,
     "data/index.json",
@@ -1088,17 +1124,18 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
     },
     `목록 현대건설 상주관리자 변경: ${id}`
   );
+  auditLog("plan.manager_change", currentUser, id);
   return json({ ok: true }, 200, env);
 }
 
-async function updatePlanStatus(env, id, status, mutatorFn) {
+async function updatePlanStatus(env, id, status, mutatorFn, currentUser, action) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) throw publicError(404, "작업계획서를 찾을 수 없습니다.", "PLAN_NOT_FOUND");
   const plan = file.json;
   plan.status = status;
   plan.updatedAt = new Date().toISOString();
   if (mutatorFn) mutatorFn(plan);
-  await ghPutJson(env, `data/plans/${id}.json`, plan, file.sha, `상태변경(${status}): ${id}`);
+  await ghPutJson(env, `data/plans/${id}.json`, plan, file.sha, `audit ${action} target=${id} actor=${currentUser.email} status=${status}`);
 
   await updateJsonWithRetry(
     env,
@@ -1118,6 +1155,7 @@ async function updatePlanStatus(env, id, status, mutatorFn) {
     },
     `목록 상태 갱신: ${id}`
   );
+  auditLog(action, currentUser, id, { status });
 }
 
 async function handleDeletePlan(request, env, id, currentUser) {
@@ -1136,13 +1174,14 @@ async function handleDeletePlan(request, env, id, currentUser) {
   } else {
     return json({ error: "작성중 또는 검토중 상태의 작업계획서만 삭제할 수 있습니다." }, 400, env);
   }
-  await ghDeleteFile(env, `data/plans/${id}.json`, file.sha, `작업계획서 삭제: ${id}`);
+  await ghDeleteFile(env, `data/plans/${id}.json`, file.sha, `audit plan.delete target=${id} actor=${currentUser.email}`);
   await updateJsonWithRetry(
     env,
     "data/index.json",
     (list) => list.filter((p) => p.id !== id),
     `목록에서 삭제: ${id}`
   );
+  auditLog("plan.delete", currentUser, id, { status: plan.status });
   return json({ ok: true }, 200, env);
 }
 
@@ -1186,7 +1225,7 @@ export default {
         isAdmin: isAdminEmail(env, currentUserGoogle.email),
       };
 
-      if (path === "/api/managers" && request.method === "GET") return await handleManagers(request, env, url);
+      if (path === "/api/managers" && request.method === "GET") return await handleManagers(request, env, url, currentUser);
       if (path === "/api/users/pending" || path === "/api/users/approve") {
         // 가입 승인은 현대건설 소속 또는 ADMIN만 가능
         if (currentUser.org !== "hyundai" && !currentUser.isAdmin) {
@@ -1201,7 +1240,7 @@ export default {
       if (path.startsWith("/api/admin/")) {
         if (!currentUser.isAdmin) return json({ error: "관리자만 사용할 수 있습니다." }, 403, env);
         if (path === "/api/admin/users" && request.method === "GET") return await handleAdminListUsers(env);
-        if (path === "/api/admin/signature" && request.method === "GET") return await handleAdminSignature(env, url);
+        if (path === "/api/admin/signature" && request.method === "GET") return await handleAdminSignature(env, url, currentUser);
         if (path === "/api/admin/users/update" && request.method === "POST") return await handleAdminUpdateUser(request, env, currentUser);
         if (path === "/api/admin/rename-user" && request.method === "POST") return await handleAdminRenameUser(request, env, currentUser);
         if (path === "/api/admin/users/status" && request.method === "POST") return await handleAdminSetStatus(request, env, currentUser);
@@ -1216,8 +1255,8 @@ export default {
         const id = decodeURIComponent(planIdMatch[1]);
         const action = planIdMatch[3];
         if (!isSafePlanId(id)) return json({ error: "잘못된 작업계획서 번호입니다." }, 400, env);
-        if (request.method === "GET" && !action) return await handleGetPlan(request, env, id);
-        if (request.method === "GET" && action === "signatures") return await handleGetPlanSignatures(env, id);
+        if (request.method === "GET" && !action) return await handleGetPlan(request, env, id, currentUser);
+        if (request.method === "GET" && action === "signatures") return await handleGetPlanSignatures(env, id, currentUser);
         if (request.method === "DELETE" && !action) return await handleDeletePlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "submit") return await handleSubmitPlan(request, env, id, currentUser);
         if (request.method === "POST" && action === "execution-review") return await handleExecutionReview(request, env, id, currentUser);

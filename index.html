@@ -761,7 +761,7 @@ async function loadForm(container, planId) {
           <div class="muted" style="margin-bottom:4px;">협력업체</div>
           <select id="f_vendorManager">
             <option value="">${plan.company ? "선택" : "업체 먼저 선택"}</option>
-            ${vendorManagers.map((m) => `<option value="${esc(m.email)}" ${plan.vendorManagerEmail === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+            ${vendorManagers.map((m, i) => managerOptionHtml(m, i, plan.vendorManagerEmail, plan.vendorManagerName)).join("")}
             <option value="__manual__" ${vendorManagerIsManual ? "selected" : ""}>직접입력</option>
           </select>
           <input id="f_vendorManagerManual" class="manager-manual ${vendorManagerIsManual ? "" : "hidden"}" type="text" maxlength="100" value="${vendorManagerIsManual ? esc(plan.vendorManagerName) : ""}" placeholder="협력업체 상주관리자 성명" />
@@ -782,7 +782,7 @@ async function loadForm(container, planId) {
   document.getElementById("f_company").addEventListener("change", async (e) => {
     const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(e.target.value));
     document.getElementById("f_vendorManager").innerHTML =
-      `<option value="">선택</option>` + r.managers.map((m) => `<option value="${esc(m.email)}">${esc(m.name)}</option>`).join("") +
+      `<option value="">선택</option>` + r.managers.map((m, i) => managerOptionHtml(m, i)).join("") +
       `<option value="__manual__">직접입력</option>`;
     document.getElementById("f_vendorManagerManual").value = "";
     document.getElementById("f_vendorManagerManual").classList.add("hidden");
@@ -890,7 +890,7 @@ function formatDateTimeDisplay(dateStr, startTime, endTime) {
 
 function collectFormData() {
   const vendorSel = document.getElementById("f_vendorManager");
-  const vendorIsManual = vendorSel.value === "__manual__";
+  const vendorManager = selectedManager(vendorSel, "f_vendorManagerManual");
   return {
     workType: document.getElementById("f_workType").value,
     workDate: document.getElementById("f_workDate").value,
@@ -901,10 +901,8 @@ function collectFormData() {
     workforceEquipment: document.getElementById("f_workforceEquipment").value,
     hazards: document.getElementById("f_hazards").value,
     mitigations: document.getElementById("f_mitigations").value,
-    vendorManagerEmail: vendorIsManual ? "" : vendorSel.value,
-    vendorManagerName: vendorIsManual
-      ? document.getElementById("f_vendorManagerManual").value.trim()
-      : vendorSel.value ? vendorSel.options[vendorSel.selectedIndex]?.text || "" : "",
+    vendorManagerEmail: vendorManager.email,
+    vendorManagerName: vendorManager.name,
   };
 }
 
@@ -998,7 +996,7 @@ async function loadDetail(container, planId) {
           <div class="manager-field">
             <select id="approveManager">
               <option value="">선택</option>
-              ${hyundaiManagers.map((m) => `<option value="${esc(m.email)}" ${plan.hyundaiManagerEmail === m.email ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+              ${hyundaiManagers.map((m, i) => managerOptionHtml(m, i, plan.hyundaiManagerEmail, plan.hyundaiManagerName)).join("")}
               <option value="__manual__" ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "selected" : ""}>직접입력</option>
             </select>
             <input id="approveManagerManual" class="manager-manual ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "" : "hidden"}" type="text" maxlength="100" value="${!plan.hyundaiManagerEmail ? esc(plan.hyundaiManagerName || "") : ""}" placeholder="현대건설 상주관리자 성명" />
@@ -1083,12 +1081,9 @@ async function completeApprovalStep(id, stage) {
     let body;
     if (!isExecution) {
       const sel = document.getElementById("approveManager");
-      const isManual = sel && sel.value === "__manual__";
-      const managerName = isManual
-        ? document.getElementById("approveManagerManual").value.trim()
-        : sel?.value ? sel.options[sel.selectedIndex]?.text || "" : "";
-      if (!sel || !managerName) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
-      body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
+      const manager = selectedManager(sel, "approveManagerManual");
+      if (!manager.name) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
+      body = { hyundaiManagerEmail: manager.email, hyundaiManagerName: manager.name };
     }
     if (!confirm(`${label}를 완료하시겠습니까?`)) return;
     const action = isExecution ? "execution-review" : "safety-approve";
@@ -1101,13 +1096,10 @@ async function completeApprovalStep(id, stage) {
 async function changeHyundaiManager(id) {
   try {
     const sel = document.getElementById("approveManager");
-    const isManual = sel && sel.value === "__manual__";
-    const managerName = isManual
-      ? document.getElementById("approveManagerManual").value.trim()
-      : sel?.value ? sel.options[sel.selectedIndex]?.text || "" : "";
-    if (!sel || !managerName) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
+    const manager = selectedManager(sel, "approveManagerManual");
+    if (!manager.name) return alert("현대건설 상주관리자를 선택하거나 직접 입력해주세요.");
     if (!confirm("현대건설 상주관리자를 변경하시겠습니까?")) return;
-    const body = { hyundaiManagerEmail: isManual ? "" : sel.value, hyundaiManagerName: managerName };
+    const body = { hyundaiManagerEmail: manager.email, hyundaiManagerName: manager.name };
     await api(`/api/plans/${encodeURIComponent(id)}/hyundai-manager`, { method: "POST", body });
     go("detail", id);
   } catch (e) {
@@ -1307,6 +1299,22 @@ function isHyundaiCompanyName(n) {
 // 예전에 저장된 "선택" 같은 안내 문구는 빈 값으로 취급
 function cleanName(n) {
   return !n || n === "선택" || n === "업체 먼저 선택" ? "" : n;
+}
+
+function managerOptionHtml(manager, index, selectedEmail = "", selectedName = "") {
+  const value = manager.email || `__named__${index}`;
+  const selected = (manager.email && manager.email === selectedEmail) || (!selectedEmail && manager.name === selectedName);
+  return `<option value="${esc(value)}" data-manager-email="${esc(manager.email || "")}" data-manager-name="${esc(manager.name || "")}" ${selected ? "selected" : ""}>${esc(manager.name)}</option>`;
+}
+
+function selectedManager(select, manualInputId) {
+  if (!select || !select.value) return { email: "", name: "" };
+  if (select.value === "__manual__") {
+    return { email: "", name: document.getElementById(manualInputId).value.trim() };
+  }
+  const option = select.options[select.selectedIndex];
+  const fallbackEmail = select.value.startsWith("__named__") ? "" : select.value;
+  return { email: option.dataset?.managerEmail || fallbackEmail, name: option.dataset?.managerName || option.text || "" };
 }
 // 2026.09.29, 16:30 (한국시간)
 function formatDoneTime(iso) {
