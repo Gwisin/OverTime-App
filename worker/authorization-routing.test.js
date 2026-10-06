@@ -20,8 +20,18 @@ const approvedUsers = {
   "admin@example.com": { name: "Admin", company: "협력사", org: "vendor", status: "approved", signatureUrl: "signatures/admin.png" },
 };
 
-test("manager lookup includes the registered phone number", async () => {
+test("manager lookup masks contact details for non-ADMIN users", async () => {
   await withMockFetch({}, async () => {
+    const response = await request("/api/managers?org=vendor&company=" + encodeURIComponent("협력사"));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      managers: [{ email: "", name: "Vendor", company: "협력사", phone: "" }],
+    });
+  });
+});
+
+test("manager lookup returns contact details to ADMIN users", async () => {
+  await withMockFetch({ email: "admin@example.com" }, async () => {
     const response = await request("/api/managers?org=vendor&company=" + encodeURIComponent("협력사"));
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
@@ -95,6 +105,73 @@ test("protected APIs reject unauthenticated requests with 401", async () => {
     assert.deepEqual(await response.json(), { error: "로그인이 필요합니다." });
     assert.equal(calls.length, 0);
   });
+});
+
+test("vendors can browse all plan summaries but only open their own company details", async () => {
+  const files = {
+    "data/index.json": [
+      { id: "own-plan", company: "협력사", status: "draft", workDate: "2026-10-06" },
+      { id: "other-plan", company: "다른협력사", status: "approved", workDate: "2026-10-05" },
+    ],
+    "data/plans/own-plan.json": { id: "own-plan", company: "협력사", status: "draft" },
+    "data/plans/other-plan.json": { id: "other-plan", company: "다른협력사", status: "approved", hazards: "private" },
+  };
+  await withMockFetch({ files }, async () => {
+    const list = await request("/api/plans?scope=all");
+    assert.equal(list.status, 200);
+    assert.deepEqual((await list.json()).plans.map(({ id }) => id), ["own-plan", "other-plan"]);
+    assert.equal((await request("/api/plans/own-plan")).status, 200);
+    const forbidden = await request("/api/plans/other-plan");
+    assert.equal(forbidden.status, 403);
+    assert.equal((await forbidden.json()).code, "PLAN_DETAIL_FORBIDDEN");
+  });
+});
+
+test("Hyundai and ADMIN can open every company plan detail", async () => {
+  const files = { "data/plans/other-plan.json": { id: "other-plan", company: "다른협력사", status: "approved" } };
+  for (const email of ["hyundai@example.com", "admin@example.com"]) {
+    await withMockFetch({ email, files }, async () => {
+      assert.equal((await request("/api/plans/other-plan")).status, 200, email);
+    });
+  }
+});
+
+test("plan signature lookup follows plan detail permissions", async () => {
+  const plan = {
+    id: "signed-plan",
+    company: "다른협력사",
+    status: "approved",
+    writerEmail: "other@example.com",
+    executionReview: { signatureUrl: "signatures/execution.png" },
+    safetyApproval: { signatureUrl: "signatures/safety.png" },
+  };
+  const users = {
+    ...approvedUsers,
+    "other@example.com": { ...approvedUsers["other@example.com"], signatureUrl: "signatures/vendor.png" },
+  };
+  const files = { "data/plans/signed-plan.json": plan };
+  const rawFiles = {
+    "signatures/vendor.png": "vendor",
+    "signatures/execution.png": "execution",
+    "signatures/safety.png": "safety",
+  };
+
+  await withMockFetch({ users, files, rawFiles }, async (calls) => {
+    const response = await request("/api/plans/signed-plan/signatures");
+    assert.equal(response.status, 403);
+    assert.equal(calls.some(({ url }) => decodeURIComponent(url.pathname).includes("/contents/signatures/")), false);
+  });
+
+  for (const email of ["other@example.com", "hyundai@example.com", "admin@example.com"]) {
+    await withMockFetch({ email, users, files, rawFiles }, async () => {
+      const response = await request("/api/plans/signed-plan/signatures");
+      assert.equal(response.status, 200, email);
+      const { signatures } = await response.json();
+      assert.match(signatures.vendor, /^data:image\/png;base64,/);
+      assert.match(signatures.execution, /^data:image\/png;base64,/);
+      assert.match(signatures.safety, /^data:image\/png;base64,/);
+    });
+  }
 });
 
 test("CORS allows configured origins and rejects every other browser origin", async () => {
