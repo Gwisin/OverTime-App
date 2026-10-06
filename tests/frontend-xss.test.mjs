@@ -317,3 +317,42 @@ test("ADMIN user rows whitelist status classes and avoid inline actions", () => 
   assert.match(row, /class="badge "/);
   assert.equal(context.userStatusClass(attack), "");
 });
+
+test("batch month limits include leap years, month ends and invalid dates", () => {
+  const context = makeContext();
+  for (const [from, max] of [
+    ["2026-10-06", "2026-11-05"], ["2026-01-01", "2026-01-31"],
+    ["2026-01-31", "2026-02-27"], ["2024-01-31", "2024-02-28"],
+    ["2026-12-15", "2027-01-14"], ["2026-02-01", "2026-02-28"],
+  ]) assert.equal(context.batchDateMax(from), max);
+  for (const value of ["", "2026-02-30", "2026-13-01", "bad"]) {
+    assert.equal(context.batchDateMax(value), "");
+  }
+});
+
+test("batch rejects reversed or excessive periods before making API requests", async () => {
+  for (const [from, to] of [["2026-10-06", "2026-11-06"], ["2026-10-06", "2026-10-05"], ["2026-02-30", "2026-03-01"]]) {
+    const alerts = [];
+    const context = makeContext(async () => { assert.fail("invalid period must not fetch"); }, {
+      document: { getElementById: (id) => ({ value: id === "batchFrom" ? from : to }) },
+      alert: (message) => alerts.push(message),
+    });
+    await context.batchDownload();
+    assert.equal(alerts.length, 1);
+  }
+});
+
+test("batch manager cache reuses directory requests for multiple plans", async () => {
+  const calls = [];
+  const context = makeContext(async (url) => {
+    calls.push(url);
+    return { ok: true, json: async () => ({ managers: [{ email: "manager@example.com", phone: "010-1234-5678" }] }) };
+  });
+  const plan = { company: "협력업체", vendorManagerEmail: "manager@example.com", hyundaiManagerEmail: "manager@example.com" };
+  const cache = new Map();
+  const first = await context.withManagerContacts(plan, cache);
+  const second = await context.withManagerContacts(plan, cache);
+  assert.equal(calls.length, 2);
+  assert.equal(first.vendorManagerPhone, "010-1234-5678");
+  assert.equal(second.hyundaiManagerPhone, "010-1234-5678");
+});

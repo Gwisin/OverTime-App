@@ -6,6 +6,9 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ### Changed
 
+- Generate single and batch plan PDFs with selectable Korean text and vector tables; retain signature images and per-plan ZIP downloads.
+- Limit batch downloads to one inclusive calendar month, show progress, prevent concurrent downloads, and reuse font and manager-directory loads.
+
 - Avoid a second `users.json` read/write cycle when registration includes a signature.
 - Remove duplicated version-history headers from `index.html` and `worker/worker.js`; Git history and this changelog are the version record.
 - Remove the stale duplicate account-status test that referenced a retired versioned Worker source, restoring the documented Worker test command.
