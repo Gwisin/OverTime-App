@@ -593,6 +593,31 @@ test("safety approval saves the selected Hyundai resident manager before executi
   });
 });
 
+test("execution review saves the selected Hyundai resident manager", async () => {
+  const files = {
+    "data/plans/pending-plan.json": {
+      id: "pending-plan",
+      company: "협력사",
+      status: "pending",
+      writerEmail: "vendor@example.com",
+      vendorManagerName: "협력소장",
+    },
+    "data/index.json": [{ id: "pending-plan", status: "pending" }],
+  };
+  await withMockFetch({ email: "hyundai@example.com", files }, async (calls) => {
+    const response = await request("/api/plans/pending-plan/execution-review", {
+      method: "POST",
+      body: { hyundaiManagerEmail: "manager@hyundai.com", hyundaiManagerName: "  현대 현장소장  " },
+    });
+    assert.equal(response.status, 200);
+    const planPuts = calls.filter(({ method, url }) => method === "PUT" && decodeURIComponent(url.pathname).endsWith("/data/plans/pending-plan.json"));
+    const saved = JSON.parse(Buffer.from(JSON.parse(planPuts.at(-1).body).content, "base64").toString());
+    assert.equal(saved.hyundaiManagerEmail, "manager@hyundai.com");
+    assert.equal(saved.hyundaiManagerName, "현대 현장소장");
+    assert.equal(saved.executionReview.reviewerEmail, "hyundai@example.com");
+  });
+});
+
 test("legacy approve route still requires and saves a Hyundai resident manager", async () => {
   const files = {
     "data/plans/pending-plan.json": { id: "pending-plan", company: "협력사", status: "pending", writerEmail: "vendor@example.com" },
