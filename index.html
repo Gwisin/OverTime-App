@@ -75,9 +75,10 @@
 
   .row { display: flex; gap: 8px; }
   .row > * { flex: 1; min-width: 0; }
-  .batch-date-range { flex-wrap: wrap; }
-  .batch-date-range > label { min-width: 150px; margin: 0; }
-  .batch-date-range input { position: relative; min-width: 0; padding-right: 40px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%234e5968' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='16' rx='2'/%3E%3Cpath d='M16 3v4M8 3v4M3 11h18'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+  .batch-date-range { flex-wrap: wrap; gap: 12px; }
+  .batch-date-range > label { flex: 1 1 200px; min-width: 0; margin: 0; }
+  .batch-date-range input { display: block; position: relative; width: 100%; min-width: 0; max-width: 100%; margin-top: 6px; -webkit-appearance: none; appearance: none; padding-right: 40px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%234e5968' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='16' rx='2'/%3E%3Cpath d='M16 3v4M8 3v4M3 11h18'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+  .batch-date-range input::-webkit-date-and-time-value { min-width: 0; text-align: left; }
   .batch-date-range input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: auto; height: auto; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
   .muted { color: var(--muted); font-size: 13px; }
   .center { text-align: center; }
@@ -1111,7 +1112,7 @@ function renderMyPage() {
       ${state.user.signatureUrl ? `<button id="changeSignatureButton" class="block" onclick="beginSignatureChange()">서명 변경</button>` : `<p class="muted">등록된 서명이 없습니다. 승인 기능을 사용하려면 서명을 등록해주세요.</p>`}
     </div>
     <div class="card">
-      <h2>작업계획서 일괄 출력(ZIP)</h2>
+      <h2>기간별 작업계획서 출력</h2>
       <div class="row batch-date-range">
         <label for="batchFrom">시작일
           <input type="date" id="batchFrom" onchange="updateBatchDateLimit()" />
@@ -1121,7 +1122,7 @@ function renderMyPage() {
         </label>
       </div>
       <p class="muted">다운로드 기간은 시작일을 포함해 최대 1개월입니다.</p>
-      <button id="batchDownloadButton" class="block" onclick="batchDownload()">작업계획서 일괄 출력(ZIP)</button>
+      <button id="batchDownloadButton" class="primary block" onclick="batchDownload()">작업계획서 PDF 출력</button>
       <div id="batchDownloadProgress" class="muted" role="status" aria-live="polite"></div>
     </div>`;
   setTimeout(setupSignaturePad, 0);
