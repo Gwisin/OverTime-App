@@ -72,6 +72,11 @@
   button.block { width: 100%; margin-top: 12px; }
   button.cta { height: 46px; margin-top: 0; border-radius: 10px; font-size: 15px; }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  .plan-form-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+  button.load-recent { height: 36px; padding: 0 12px; background: var(--bg); color: var(--sub); font-size: 13px; white-space: nowrap; flex-shrink: 0; }
+  button.load-recent:hover { background: #eef0f3; }
+  button.load-recent:active { background: #e5e8ed; }
+  button.load-recent:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .row { display: flex; gap: 8px; }
   .row > * { flex: 1; min-width: 0; }
@@ -690,9 +695,9 @@ async function loadForm(container, planId) {
 
   container.innerHTML = `
     <div class="card">
-      <div class="top" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div class="top plan-form-header">
         <h2 style="margin:0;">작업계획서 ${planId ? "수정" : "작성"}</h2>
-        <button class="link" style="background:none;border:none;color:var(--accent);font-size:13px;" onclick="loadYesterday()">전날 내용 불러오기</button>
+        <button type="button" class="load-recent" onclick="loadYesterday()">최근작업 불러오기</button>
       </div>
       <label>작업구분</label>
       <select id="f_workType">
