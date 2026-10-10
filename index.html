@@ -15,6 +15,8 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
     --accent: #1b64da;
@@ -235,22 +237,6 @@ async function api(path, { method = "GET", body, auth = true } = {}) {
   return data;
 }
 
-// Cache only public company choices; account status and permissions remain uncached.
-let companiesCache;
-let companiesExpiresAt = 0;
-let companiesPromise;
-function loadCompanies() {
-  if (companiesCache && Date.now() < companiesExpiresAt) return Promise.resolve(companiesCache);
-  if (!companiesPromise) {
-    companiesPromise = api("/api/companies", { auth: false }).then((data) => {
-      companiesCache = data;
-      companiesExpiresAt = Date.now() + 60000;
-      return data;
-    }).finally(() => { companiesPromise = null; });
-  }
-  return companiesPromise;
-}
-
 /* =========================================================
    라우팅 / 렌더
    ========================================================= */
@@ -459,7 +445,7 @@ function renderRegister() {
     </div>`;
   setTimeout(async () => {
     try {
-      const data = await loadCompanies();
+      const data = await api("/api/companies", { auth: false });
       const sel = document.getElementById("regCompanySelect");
       sel.innerHTML = registrationCompanyOptionsHtml(data.companies);
       sel.addEventListener("change", () => {
@@ -637,7 +623,7 @@ function showMorePlans() {
 
 async function loadHome(container) {
   try {
-    const [data, companiesRes] = await Promise.all([api("/api/plans" + planListQueryString()), loadCompanies()]);
+    const [data, companiesRes] = await Promise.all([api("/api/plans" + planListQueryString()), api("/api/companies", { auth: false })]);
     container.innerHTML = `
       <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
       ${state.user.org === "hyundai" || state.user.isAdmin ? `<div class="row" style="margin-top:10px;"><button onclick="go('admin')">가입 승인 관리</button>${state.user.isAdmin ? `<button onclick="go('users')">사용자 관리</button>` : ""}</div>` : ""}
@@ -683,21 +669,27 @@ async function loadForm(container, planId) {
     vendorManagerEmail: "",
     vendorManagerName: "",
   };
-  const planPromise = planId ? api("/api/plans/" + encodeURIComponent(planId)).then((data) => data.plan) : Promise.resolve(plan);
-  const companiesRequest = state.user.org === "vendor" ? Promise.resolve({ companies: [state.user.company] }) : loadCompanies();
-  const summariesRequest = api("/api/plans").then((data) => data.plans).catch(() => []);
-  // Editing needs the stored company; new vendor plans already know their company.
-  const managersRequest = planPromise.then((loadedPlan) => loadedPlan.company
-    ? api("/api/managers?org=vendor&company=" + encodeURIComponent(loadedPlan.company)).then((data) => data.managers).catch(() => [])
-    : []);
-  let formCompanies, plansSummary, vendorManagers;
-  try {
-    let companiesRes;
-    [plan, companiesRes, plansSummary, vendorManagers] = await Promise.all([planPromise, companiesRequest, summariesRequest, managersRequest]);
-    formCompanies = companiesRes.companies;
-  } catch (e) {
-    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
-    return;
+  if (planId) {
+    try {
+      const data = await api("/api/plans/" + encodeURIComponent(planId));
+      plan = data.plan;
+    } catch (e) {
+      container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const companiesRes = await api("/api/companies", { auth: false });
+  // 협력업체는 자기 업체 명의로만 작성할 수 있으므로 업체 선택지를 자기 업체로 제한 (현대건설 단계는 전체)
+  const formCompanies = state.user.org === "vendor" ? [state.user.company] : companiesRes.companies;
+  let plansSummary = [];
+  try { plansSummary = (await api("/api/plans")).plans; } catch (e) {}
+  let vendorManagers = [];
+  if (plan.company) {
+    try {
+      const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(plan.company));
+      vendorManagers = r.managers;
+    } catch (e) {}
   }
   const vendorManagerIsManual = !plan.vendorManagerEmail && Boolean(cleanName(plan.vendorManagerName));
 
@@ -1694,35 +1686,6 @@ async function withManagerContacts(plan, cache = new Map()) {
   return result;
 }
 
-// Load export libraries on demand, sharing concurrent loads and allowing retries.
-const exportLibraryPromises = new Map();
-function loadExportLibrary(name) {
-  const libraries = {
-    jspdf: { url: "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", ready: () => Boolean(window.jspdf?.jsPDF) },
-    jszip: { url: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js", ready: () => Boolean(window.JSZip) },
-  };
-  const library = libraries[name];
-  if (library.ready()) return Promise.resolve();
-  if (!exportLibraryPromises.has(name)) {
-    const promise = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = library.url;
-      script.async = true;
-      script.onload = () => {
-        if (library.ready()) resolve();
-        else { script.remove(); reject(new Error("PDF 라이브러리를 불러올 수 없습니다. 다시 시도해주세요.")); }
-      };
-      script.onerror = () => {
-        script.remove();
-        reject(new Error("PDF 라이브러리를 불러올 수 없습니다. 다시 시도해주세요."));
-      };
-      document.head.appendChild(script);
-    }).catch((error) => { exportLibraryPromises.delete(name); throw error; });
-    exportLibraryPromises.set(name, promise);
-  }
-  return exportLibraryPromises.get(name);
-}
-
 // Load the bundled fonts once; jsPDF subsets them to the glyphs used in each PDF.
 let pdfFontsPromise;
 async function loadPdfFonts() {
@@ -1767,7 +1730,7 @@ function drawPdfCell(pdf, text, x, y, width, height, { shaded = false, centered 
 }
 
 async function createPlanPdf(sourcePlan, managerCache) {
-  const [fonts, plan] = await Promise.all([loadPdfFonts(), withManagerContacts(sourcePlan, managerCache), loadExportLibrary("jspdf")]);
+  const [fonts, plan] = await Promise.all([loadPdfFonts(), withManagerContacts(sourcePlan, managerCache)]);
   const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true, putOnlyUsedFonts: true });
   ["normal", "bold"].forEach((style, index) => {
     const filename = `NanumGothic-${style}.ttf`;
@@ -1949,8 +1912,7 @@ async function batchDownload() {
       if (progress) progress.textContent = "해당 기간에 작업계획서가 없습니다.";
       return;
     }
-    await Promise.all([loadExportLibrary("jspdf"), loadExportLibrary("jszip")]);
-    const zip = new window.JSZip();
+    const zip = new JSZip();
     const managerCache = new Map();
     let done = 0;
     for (const p of data.plans) {
