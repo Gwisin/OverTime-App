@@ -6,6 +6,8 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ### Changed
 
+- Allow ADMIN accounts to delete approved and rejected plans from the detail view; preserve existing deletion permissions for other accounts.
+
 - Measure frontend route/API/export durations locally and expose Worker operation durations and call counts through `Server-Timing`.
 - Parallelize independent plan-form reads; skip company lookup for vendor forms; reuse short-lived company and manager directory requests with account isolation and invalidation after writes.
 - Load PDF/ZIP libraries only when exporting, with shared loads, timeouts and retries.

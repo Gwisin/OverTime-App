@@ -1217,12 +1217,14 @@ async function handleDeletePlan(request, env, id, currentUser) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
   const plan = file.json;
-  // 삭제 정책: 승인완료는 삭제 불가
+  // 삭제 정책: 승인완료·반려는 ADMIN만 삭제 가능
   //  - 작성중(draft): 현대건설 소속 또는 작성자 본인
   //  - 검토중(pending): 현대건설 소속만 (작성자는 불가)
   const isHyundai = currentUser.org === "hyundai";
   const isWriter = currentUser.email === plan.writerEmail;
-  if (plan.status === "draft") {
+  if (currentUser.isAdmin && ["approved", "rejected"].includes(plan.status)) {
+    // ADMIN 여부는 인증된 이메일과 서버 설정으로 판정한다.
+  } else if (plan.status === "draft") {
     if (!(isHyundai || isWriter)) return json({ error: "삭제 권한이 없습니다." }, 403, env);
   } else if (["pending", "approving"].includes(plan.status)) {
     if (!isHyundai) return json({ error: "검토중인 작업계획서는 현대건설만 삭제할 수 있습니다." }, 403, env);
