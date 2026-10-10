@@ -109,6 +109,132 @@ async function withMockFetch(options, callback) {
   }
 }
 
+test("Hyundai and ADMIN can approve or reject pending registrations without changing profile data", async () => {
+  const pending = { name: "Applicant", company: "협력사", status: "pending", signatureUrl: "signatures/applicant.png", createdAt: "2026-10-01T00:00:00.000Z" };
+  for (const email of ["hyundai@example.com", "admin@example.com"]) {
+    for (const approve of [true, false]) {
+      const users = { ...approvedUsers, "applicant@example.com": pending };
+      await withMockFetch({ email, users }, async (calls) => {
+        const response = await request("/api/users/approve", { method: "POST", body: { email: "applicant@example.com", approve } });
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), { ok: true });
+        const puts = calls.filter(({ method }) => method === "PUT");
+        assert.equal(puts.length, 1);
+        const saved = JSON.parse(Buffer.from(JSON.parse(puts[0].body).content, "base64").toString());
+        const applicant = saved["applicant@example.com"];
+        assert.equal(applicant.status, approve ? "approved" : "rejected");
+        assert.equal(applicant.approvedBy, email);
+        assert.ok(Number.isFinite(Date.parse(applicant.approvedAt)));
+        const { status, approvedBy, approvedAt, ...profile } = applicant;
+        const { status: pendingStatus, ...originalProfile } = pending;
+        assert.deepEqual(profile, originalProfile);
+        assert.deepEqual(saved["admin@example.com"], approvedUsers["admin@example.com"]);
+      });
+    }
+  }
+});
+
+test("registration decisions cannot change non-pending accounts", async () => {
+  for (const email of ["hyundai@example.com", "admin@example.com"]) {
+    for (const status of ["approved", "suspended", "rejected", "invalid", undefined]) {
+      for (const approve of [true, false]) {
+        const users = { ...approvedUsers, "target@example.com": { name: "Target", status } };
+        await withMockFetch({ email, users }, async (calls) => {
+          const response = await request("/api/users/approve", { method: "POST", body: { email: "target@example.com", approve } });
+          assert.equal(response.status, 409);
+          assert.equal((await response.json()).code, "INVALID_ACCOUNT_STATUS");
+          assert.equal(calls.some(({ method }) => method === "PUT"), false);
+        });
+      }
+    }
+  }
+});
+
+test("registration decisions protect ADMIN targets even when pending", async () => {
+  for (const email of ["hyundai@example.com", "admin@example.com"]) {
+    for (const approve of [true, false]) {
+      for (const target of ["admin@example.com", "ADMIN@example.com"]) {
+        const users = { ...approvedUsers, [target]: { status: "pending" } };
+        if (target === email) users[email] = approvedUsers[email];
+        await withMockFetch({ email, users }, async (calls) => {
+          const response = await request("/api/users/approve", { method: "POST", body: { email: target, approve } });
+          assert.equal(response.status, 403);
+          assert.equal((await response.json()).code, "ADMIN_ACCOUNT_PROTECTED");
+          assert.equal(calls.some(({ method }) => method === "PUT"), false);
+        });
+      }
+    }
+  }
+});
+
+test("registration decisions reject non-boolean approve values without writing", async () => {
+  for (const approve of ["true", "false", "", 0, 1, null, undefined, [], {}]) {
+    const users = { ...approvedUsers, "applicant@example.com": { status: "pending" } };
+    await withMockFetch({ email: "hyundai@example.com", users }, async (calls) => {
+      const response = await request("/api/users/approve", { method: "POST", body: { email: "applicant@example.com", approve } });
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).code, "INVALID_APPROVAL");
+      assert.equal(calls.some(({ method }) => method === "PUT"), false);
+    });
+  }
+});
+
+test("registration decisions reject malformed and missing targets without writing", async () => {
+  for (const body of [null, {}, { email: 1, approve: true }, { email: [], approve: true }, { email: " ", approve: true }]) {
+    await withMockFetch({ email: "hyundai@example.com" }, async (calls) => {
+      const response = await request("/api/users/approve", { method: "POST", body });
+      assert.equal(response.status, 400);
+      assert.equal(calls.some(({ method }) => method === "PUT"), false);
+    });
+  }
+  for (const email of ["missing@example.com", "__proto__", "constructor"]) {
+    await withMockFetch({ email: "hyundai@example.com" }, async (calls) => {
+      const response = await request("/api/users/approve", { method: "POST", body: { email, approve: true } });
+      assert.equal(response.status, 404);
+      assert.equal((await response.json()).code, "USER_NOT_FOUND");
+      assert.equal(calls.some(({ method }) => method === "PUT"), false);
+    });
+  }
+});
+
+test("vendor cannot decide registrations and only ADMIN can reactivate suspended users", async () => {
+  const users = { ...approvedUsers, "target@example.com": { status: "suspended" } };
+  await withMockFetch({ users }, async (calls) => {
+    assert.equal((await request("/api/users/approve", { method: "POST", body: { email: "target@example.com", approve: true } })).status, 403);
+    assert.equal(calls.some(({ method }) => method === "PUT"), false);
+  });
+  for (const email of ["hyundai@example.com", "admin@example.com"]) {
+    await withMockFetch({ email, users }, async (calls) => {
+      const response = await request("/api/admin/users/status", { method: "POST", body: { email: "target@example.com", status: "approved" } });
+      assert.equal(response.status, email === "admin@example.com" ? 200 : 403);
+      assert.equal(calls.some(({ method }) => method === "PUT"), email === "admin@example.com");
+    });
+  }
+});
+
+test("registration decisions recheck pending status after a GitHub write conflict", async () => {
+  const users = { ...approvedUsers, "target@example.com": { status: "pending" } };
+  await withMockFetch({ email: "hyundai@example.com", users }, async () => {
+    const mockFetch = globalThis.fetch;
+    let writes = 0;
+    globalThis.fetch = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.pathname.endsWith("/contents/users.json")) {
+        if (init.method === "PUT") {
+          writes++;
+          return new Response("SHA conflict", { status: 409 });
+        }
+        if (writes) return Response.json(githubContent({ ...users, "target@example.com": { status: "suspended" } }, "updated-sha"));
+      }
+      return mockFetch(input, init);
+    };
+    const response = await request("/api/users/approve", { method: "POST", body: { email: "target@example.com", approve: true } });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).code, "INVALID_ACCOUNT_STATUS");
+    assert.equal(writes, 1);
+  });
+});
+
 test("protected APIs reject unauthenticated requests with 401", async () => {
   await withMockFetch({}, async (calls) => {
     const response = await request("/api/plans", { token: null });
