@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import worker from "./worker.js";
+import { signedToken, keysResponse } from "./test-support/google-token.js";
 
 const env = {
   ALLOWED_ORIGIN: "https://example.com",
@@ -23,9 +24,7 @@ async function register(body, calls, existingUsers = {}) {
     const url = new URL(typeof input === "string" ? input : input.url);
     const method = init.method || "GET";
     calls.push({ url, method, body: init.body });
-    if (url.hostname === "oauth2.googleapis.com") {
-      return Response.json({ aud: env.GOOGLE_CLIENT_ID, email: "new@example.com", email_verified: "true", name: "New" });
-    }
+    if (url.href === "https://www.googleapis.com/oauth2/v3/certs") return keysResponse();
     if (method === "GET" && url.pathname.endsWith("/contents/users.json")) {
       return Response.json(githubContent(currentUsers));
     }
@@ -42,7 +41,7 @@ async function register(body, calls, existingUsers = {}) {
     return await worker.fetch(new Request("https://worker.example/api/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken: "google-token", company: "협력사", adminName: "관리자", phone: "010-1234-5678", ...body }),
+      body: JSON.stringify({ idToken: signedToken("new@example.com"), company: "협력사", adminName: "관리자", phone: "010-1234-5678", ...body }),
     }), env);
   } finally {
     globalThis.fetch = originalFetch;

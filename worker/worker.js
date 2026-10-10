@@ -47,6 +47,19 @@ async function readJson(request, maxBytes = 64 * 1024, { allowEmpty = false } = 
   }
 }
 
+// Request-scoped timings contain only operation names, durations and call counts.
+async function externalFetch(env, name, input, init) {
+  const start = performance.now();
+  try { return await fetch(input, init); }
+  finally {
+    if (env.TIMINGS) {
+      const entry = env.TIMINGS[name] ||= { duration: 0, count: 0 };
+      entry.duration += performance.now() - start;
+      entry.count++;
+    }
+  }
+}
+
 function json(data, status, env) {
   return new Response(JSON.stringify(data), {
     status: status || 200,
@@ -78,7 +91,7 @@ function b64DecodeUnicode(str) {
 }
 
 async function ghGetFile(env, path) {
-  const res = await fetch(ghUrl(env, path) + `?ref=${env.GITHUB_BRANCH || "main"}`, {
+  const res = await externalFetch(env, "github_read", ghUrl(env, path) + `?ref=${env.GITHUB_BRANCH || "main"}`, {
     headers: ghHeaders(env),
   });
   if (res.status === 404) return null;
@@ -101,7 +114,7 @@ async function ghPutJson(env, path, obj, sha, message) {
     branch: env.GITHUB_BRANCH || "main",
   };
   if (sha) body.sha = sha;
-  const res = await fetch(ghUrl(env, path), {
+  const res = await externalFetch(env, "github_write", ghUrl(env, path), {
     method: "PUT",
     headers: { ...ghHeaders(env), "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -122,7 +135,7 @@ async function ghPutBinaryBase64(env, path, base64Content, sha, message) {
     branch: env.GITHUB_BRANCH || "main",
   };
   if (sha) body.sha = sha;
-  const res = await fetch(ghUrl(env, path), {
+  const res = await externalFetch(env, "github_write", ghUrl(env, path), {
     method: "PUT",
     headers: { ...ghHeaders(env), "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -133,7 +146,7 @@ async function ghPutBinaryBase64(env, path, base64Content, sha, message) {
 
 // 바이너리(이미지) 파일을 base64 문자열로 가져오기
 async function ghGetBinaryBase64(env, path) {
-  const res = await fetch(ghUrl(env, path) + `?ref=${env.GITHUB_BRANCH || "main"}`, {
+  const res = await externalFetch(env, "github_read", ghUrl(env, path) + `?ref=${env.GITHUB_BRANCH || "main"}`, {
     headers: { ...ghHeaders(env), Accept: "application/vnd.github.raw+json" },
   });
   if (res.status === 404) return null;
@@ -243,7 +256,7 @@ function normalizeTime(value, label) {
 }
 
 async function ghDeleteFile(env, path, sha, message) {
-  const res = await fetch(ghUrl(env, path), {
+  const res = await externalFetch(env, "github_write", ghUrl(env, path), {
     method: "DELETE",
     headers: { ...ghHeaders(env), "Content-Type": "application/json" },
     body: JSON.stringify({ message: message || `delete ${path}`, sha, branch: env.GITHUB_BRANCH || "main" }),
@@ -271,15 +284,69 @@ async function updateJsonWithRetry(env, path, mutatorFn, message, initialExistin
 
 // ---------- Google 로그인 검증 ----------
 
+// Cache Google's rotating public keys, never account status or token payloads.
+const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
+let googleKeySet;
+let googleKeysRequest;
+async function googleKeys(env, kid) {
+  const now = Date.now();
+  const fresh = googleKeySet && googleKeySet.expires > now;
+  if (fresh && (googleKeySet.keys.has(kid) || now - googleKeySet.loadedAt < 60000)) return googleKeySet.keys;
+  if (!googleKeysRequest) {
+    googleKeysRequest = (async () => {
+      const response = await externalFetch(env, "google_keys", GOOGLE_JWKS_URL);
+      if (!response.ok) throw new Error("Google public key lookup failed");
+      const data = await response.json();
+      if (!Array.isArray(data.keys) || !data.keys.length) throw new Error("Invalid Google public keys");
+      const keys = new Map();
+      for (const jwk of data.keys) {
+        if (jwk.kty !== "RSA" || !jwk.kid || (jwk.use && jwk.use !== "sig") || (jwk.alg && jwk.alg !== "RS256")) continue;
+        keys.set(jwk.kid, await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]));
+      }
+      if (!keys.size) throw new Error("No usable Google public keys");
+      const maxAge = /(?:^|,)\s*max-age=(\d+)/i.exec(response.headers.get("Cache-Control") || "");
+      const age = Number(response.headers.get("Age")) || 0;
+      const ttl = Math.max(0, Math.min(86400, (maxAge ? Number(maxAge[1]) : 300) - age));
+      googleKeySet = { keys, loadedAt: Date.now(), expires: Date.now() + ttl * 1000 };
+      return keys;
+    })().finally(() => { googleKeysRequest = null; });
+  }
+  return googleKeysRequest;
+}
+function jwtBytes(part) {
+  if (!/^[A-Za-z0-9_-]+$/.test(part)) throw new Error("Invalid JWT encoding");
+  return Uint8Array.from(atob(part.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+}
 async function verifyGoogleToken(env, idToken) {
-  if (typeof idToken !== "string" || !idToken) return null;
-
-  const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
-  if (!res.ok) return null;
-  const data = await res.json();
-  if (data.aud !== env.GOOGLE_CLIENT_ID) return null;
-  if (!data.email || data.email_verified !== "true") return null;
-  return { email: data.email.toLowerCase(), name: data.name, picture: data.picture };
+  if (typeof idToken !== "string" || !idToken || idToken.length > 16384) return null;
+  const start = performance.now();
+  try {
+    let parts, header, data, signature;
+    try {
+      parts = idToken.split(".");
+      if (parts.length !== 3) return null;
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      header = JSON.parse(decoder.decode(jwtBytes(parts[0])));
+      data = JSON.parse(decoder.decode(jwtBytes(parts[1])));
+      signature = jwtBytes(parts[2]);
+      const now = Date.now() / 1000;
+      if (header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid || header.crit) return null;
+      if (!env.GOOGLE_CLIENT_ID || data.aud !== env.GOOGLE_CLIENT_ID) return null;
+      if (!["accounts.google.com", "https://accounts.google.com"].includes(data.iss)) return null;
+      if (typeof data.exp !== "number" || !Number.isFinite(data.exp) || data.exp <= now) return null;
+      if (typeof data.iat !== "number" || !Number.isFinite(data.iat) || data.iat > now + 60) return null;
+      if (data.nbf !== undefined && (typeof data.nbf !== "number" || !Number.isFinite(data.nbf) || data.nbf > now)) return null;
+      if (typeof data.sub !== "string" || !data.sub || typeof data.email !== "string" || !data.email || data.email_verified !== true) return null;
+    } catch { return null; }
+    const key = (await googleKeys(env, header.kid)).get(header.kid);
+    if (!key) return null;
+    const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, new TextEncoder().encode(parts[0] + "." + parts[1]));
+    if (!valid) return null;
+    // Preserve the existing email-keyed user records and login response contract.
+    return { email: data.email.toLowerCase(), name: data.name, picture: data.picture };
+  } finally {
+    if (env.TIMINGS) env.TIMINGS.auth = { duration: performance.now() - start, count: 1 };
+  }
 }
 
 async function requireAuth(request, env) {
@@ -961,7 +1028,7 @@ async function handleSubmitPlan(request, env, id, currentUser) {
     delete plan.rejectedByName;
     delete plan.rejectedStage;
     delete plan.rejectReason;
-  }, currentUser, "plan.submit");
+  }, currentUser, "plan.submit", file);
   return json({ ok: true }, 200, env);
 }
 
@@ -1116,8 +1183,8 @@ async function handleChangeHyundaiManager(request, env, id, currentUser) {
   return json({ ok: true }, 200, env);
 }
 
-async function updatePlanStatus(env, id, status, mutatorFn, currentUser, action) {
-  const file = await ghGetJson(env, `data/plans/${id}.json`);
+async function updatePlanStatus(env, id, status, mutatorFn, currentUser, action, initialFile) {
+  const file = initialFile || await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) throw publicError(404, "작업계획서를 찾을 수 없습니다.", "PLAN_NOT_FOUND");
   const plan = file.json;
   plan.status = status;
@@ -1175,7 +1242,7 @@ async function handleDeletePlan(request, env, id, currentUser) {
 
 // ---------- 라우팅 ----------
 
-export default {
+const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -1263,5 +1330,19 @@ export default {
       console.error("Unhandled API error", { requestId, method: request.method, path, error: e && e.stack ? e.stack : String(e) });
       return json({ error: "서버 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.", code: "INTERNAL_ERROR", requestId }, 500, env);
     }
+  },
+};
+
+// Expose timings in DevTools without changing API response bodies.
+export default {
+  async fetch(request, env) {
+    const start = performance.now();
+    const timings = {};
+    const response = await worker.fetch(request, { ...env, TIMINGS: timings });
+    const entries = [`total;dur=${(performance.now() - start).toFixed(1)}`];
+    for (const [name, entry] of Object.entries(timings)) entries.push(`${name};dur=${entry.duration.toFixed(1)};desc="${entry.count} calls"`);
+    response.headers.set("Server-Timing", entries.join(", "));
+    if (response.headers.has("Access-Control-Allow-Origin")) response.headers.set("Access-Control-Expose-Headers", "Server-Timing");
+    return response;
   },
 };
