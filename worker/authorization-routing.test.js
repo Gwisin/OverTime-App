@@ -86,11 +86,12 @@ function mockExternalRequests({ email = "vendor@example.com", users = approvedUs
   return { calls, fetch };
 }
 
-async function request(path, { method = "GET", body, token = activeToken, origin } = {}) {
+async function request(path, { method = "GET", body, token = activeToken, origin, testMode } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (origin) headers.Origin = origin;
+  if (testMode) headers["X-OverTime-Test-Mode"] = testMode;
   return worker.fetch(new Request(`https://worker.example${path}`, {
     method,
     headers,
@@ -969,4 +970,84 @@ test("plan deletion enforces role and status permissions and preserves other ind
       });
     }
   }
+});
+
+
+test("vendor test mode requires a live approved ADMIN and preserves its stored identity", async () => {
+  for (const email of ["vendor@example.com", "hyundai@example.com"]) {
+    await withMockFetch({ email }, async () => {
+      assert.equal((await request("/api/plans", { testMode: "vendor" })).status, 403);
+      assert.equal((await request("/api/auth", { method: "POST", body: { idToken: activeToken }, testMode: "vendor" })).status, 403);
+    });
+  }
+  await withMockFetch({ email: "admin@example.com" }, async (calls) => {
+    const result = await request("/api/auth", { method: "POST", body: { idToken: activeToken }, testMode: "vendor" });
+    const { user } = await result.json();
+    assert.equal(result.status, 200);
+    assert.equal(user.email, "admin@example.com");
+    assert.equal(user.company, "[테스트] 협력업체");
+    assert.equal(user.org, "vendor");
+    assert.equal(user.tier, "vendor");
+    assert.equal(user.isAdmin, false);
+    assert.equal(user.vendorTestMode, true);
+    const restored = await request("/api/auth", { method: "POST", body: { idToken: activeToken } });
+    assert.equal((await restored.json()).user.isAdmin, true);
+    assert.equal(calls.some(c => c.method === "PUT"), false);
+    assert.equal((await request("/api/plans", { testMode: "admin" })).status, 400);
+  });
+  await withMockFetch({ email: "admin@example.com", users: { ...approvedUsers, "admin@example.com": { ...approvedUsers["admin@example.com"], status: "suspended" } } }, async () => {
+    assert.equal((await request("/api/plans", { testMode: "vendor" })).status, 403);
+  });
+});
+
+test("ADMIN vendor test mode enforces vendor scope and denies management and approval writes", async () => {
+  const files = {
+    "data/index.json": [{ id: "test-plan", company: "[테스트] 협력업체" }, { id: "other-plan", company: "협력사" }],
+    "data/plans/other-plan.json": { id: "other-plan", company: "협력사", status: "pending" },
+    "data/plans/test-plan.json": { id: "test-plan", company: "[테스트] 협력업체", status: "approved" },
+  };
+  await withMockFetch({ email: "admin@example.com", files }, async (calls) => {
+    const list = await request("/api/plans", { testMode: "vendor" });
+    assert.deepEqual((await list.json()).plans.map(p => p.id), ["test-plan"]);
+    assert.equal((await request("/api/plans/other-plan", { testMode: "vendor" })).status, 403);
+    for (const path of ["/api/admin/users", "/api/users/pending"]) {
+      assert.equal((await request(path, { testMode: "vendor" })).status, 403);
+    }
+    for (const path of ["/api/users/approve", "/api/admin/users/update", "/api/plans/other-plan/submit", "/api/plans/test-plan/execution-review", "/api/plans/test-plan/safety-approve"]) {
+      assert.equal((await request(path, { method: "POST", body: {}, testMode: "vendor" })).status, 403, path);
+    }
+    assert.equal((await request("/api/plans/test-plan", { method: "DELETE", testMode: "vendor" })).status, 400);
+    assert.equal((await request("/api/plans", { method: "POST", testMode: "vendor", body: { workDate: "2026-10-11", workType: "야간", company: "협력사" } })).status, 403);
+    assert.equal(calls.some(c => c.method === "PUT" || c.method === "DELETE"), false);
+  });
+});
+
+test("ADMIN can create and submit as a vendor then complete safety-first parallel approval after restoring", async () => {
+  const files = { "data/index.json": [] };
+  await withMockFetch({ email: "admin@example.com", files }, async (calls) => {
+    function syncWrites() {
+      for (const call of calls.splice(0)) {
+        if (call.method !== "PUT") continue;
+        const path = decodeURIComponent(call.url.pathname.split("/contents/")[1]);
+        files[path] = JSON.parse(Buffer.from(JSON.parse(call.body).content, "base64").toString());
+        assert.notEqual(path, "users.json");
+      }
+    }
+    const saved = await request("/api/plans", { method: "POST", testMode: "vendor", body: { company: "[테스트] 협력업체", workDate: "2026-10-11", workType: "야간", vendorManagerName: "테스트 관리자" } });
+    assert.equal(saved.status, 200);
+    const { id } = await saved.json();
+    syncWrites();
+    assert.equal(files[`data/plans/${id}.json`].writerEmail, "admin@example.com");
+    assert.equal((await request(`/api/plans/${id}/submit`, { method: "POST", testMode: "vendor" })).status, 200);
+    syncWrites();
+    assert.equal((await request(`/api/plans/${id}/safety-approve`, { method: "POST", body: { hyundaiManagerName: "현대 관리자" } })).status, 200);
+    syncWrites();
+    assert.equal(files[`data/plans/${id}.json`].status, "pending");
+    assert.equal(files[`data/plans/${id}.json`].executionReview, undefined);
+    assert.equal((await request(`/api/plans/${id}/execution-review`, { method: "POST" })).status, 200);
+    syncWrites();
+    assert.equal(files[`data/plans/${id}.json`].status, "approved");
+    assert.ok(files[`data/plans/${id}.json`].executionReview);
+    assert.ok(files[`data/plans/${id}.json`].safetyApproval);
+  });
 });
