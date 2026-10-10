@@ -661,6 +661,9 @@ const PLAN_BADGE_LABEL = { draft: "작성중", pending: "검토중", approving: 
 function planStatusClass(status) {
   return Object.prototype.hasOwnProperty.call(PLAN_BADGE_LABEL, status) ? status : "";
 }
+function planDisplayStatus(plan) {
+  return plan.status === "draft" && plan.rejectedAt ? "rejected" : plan.status;
+}
 function sortPlansForList(plans) {
   return [...plans].sort(
     (a, b) =>
@@ -671,7 +674,7 @@ function sortPlansForList(plans) {
 }
 function planCardHtml(p) {
   const badgeLabel = PLAN_BADGE_LABEL;
-  const displayStatus = p.status === "draft" && p.rejectedAt ? "rejected" : p.status;
+  const displayStatus = planDisplayStatus(p);
   const statusClass = planStatusClass(displayStatus);
   const statusLabel = badgeLabel[displayStatus] || displayStatus || "-";
   const vendorManagerName = cleanName(p.vendorManagerName) || "-";
@@ -1070,8 +1073,9 @@ async function loadDetailContent(container, planId) {
     const plan = data.plan;
     state.currentPlan = plan;
     const badgeLabel = PLAN_BADGE_LABEL;
-    const statusClass = planStatusClass(plan.status);
-    const statusLabel = badgeLabel[plan.status] || plan.status || "-";
+    const displayStatus = planDisplayStatus(plan);
+    const statusClass = planStatusClass(displayStatus);
+    const statusLabel = badgeLabel[displayStatus] || displayStatus || "-";
     const isHyundaiApprovalState = ["pending", "approving"].includes(plan.status);
     const canExecutionReview = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.executionReview;
     const canSafetyApprove = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.safetyApproval;
