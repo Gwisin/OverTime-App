@@ -15,8 +15,6 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
     --accent: #1b64da;
@@ -226,17 +224,58 @@ const state = {
 /* =========================================================
    API 헬퍼
    ========================================================= */
+// Measurements stay in the browser's Performance panel; no tokens or form data are recorded.
+function clockNow() { return globalThis.performance?.now() ?? Date.now(); }
+function recordDuration(name, start) {
+  if (!globalThis.performance?.measure) return;
+  try {
+    performance.clearMeasures(name);
+    performance.measure(name, { start, end: performance.now() });
+  } catch { /* Measurement support must never interrupt application work. */ }
+}
+const directoryCache = new Map();
+const directoryRequests = new Map();
+let directoryGeneration = 0;
+function clearDirectoryCache() {
+  directoryGeneration++;
+  directoryCache.clear();
+  directoryRequests.clear();
+}
 async function api(path, { method = "GET", body, auth = true } = {}) {
-  const headers = { "Content-Type": "application/json" };
-  if (auth && state.idToken) headers["Authorization"] = "Bearer " + state.idToken;
-  const res = await fetch(CONFIG.WORKER_URL + path, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "요청 처리 중 오류가 발생했습니다.");
-  return data;
+  const token = auth ? state.idToken : null;
+  const ttl = method === "GET" ? (path === "/api/companies" ? 60000 : path.startsWith("/api/managers?") ? 30000 : 0) : 0;
+  const key = JSON.stringify([token, path]);
+  if (ttl) {
+    const cached = directoryCache.get(key);
+    if (cached && cached.expires > Date.now()) return cached.data;
+    if (directoryRequests.has(key)) return directoryRequests.get(key);
+  }
+  const generation = directoryGeneration;
+  const start = clockNow();
+  const operation = (async () => {
+    try {
+      const headers = {};
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      if (token) headers.Authorization = "Bearer " + token;
+      const res = await fetch(CONFIG.WORKER_URL + path, {
+        method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "요청 처리 중 오류가 발생했습니다.");
+      if (method !== "GET") clearDirectoryCache();
+      if (ttl && generation === directoryGeneration) directoryCache.set(key, { data, expires: Date.now() + ttl });
+      return data;
+    } finally {
+      const route = path.split("?")[0].replace(/(\/api\/plans\/)[^/]+/, "$1:id");
+      recordDuration(`overtime:api:${method}:${route}`, start);
+    }
+  })();
+  if (ttl) {
+    directoryRequests.set(key, operation);
+    try { return await operation; }
+    finally { if (directoryRequests.get(key) === operation) directoryRequests.delete(key); }
+  }
+  return operation;
 }
 
 /* =========================================================
@@ -417,6 +456,7 @@ window.addEventListener("resize", () => {
 });
 
 async function onGoogleCredential(response) {
+  clearDirectoryCache();
   state.idToken = response.credential;
   localStorage.setItem("idToken", state.idToken);
   try {
@@ -437,6 +477,7 @@ async function onGoogleCredential(response) {
 }
 
 function logout() {
+  clearDirectoryCache();
   localStorage.removeItem("idToken");
   state.idToken = null;
   state.user = null;
@@ -662,6 +703,11 @@ function showMorePlans() {
 }
 
 async function loadHome(container) {
+  const start = clockNow();
+  try { return await loadHomeContent(container); }
+  finally { recordDuration("overtime:loadHome", start); }
+}
+async function loadHomeContent(container) {
   try {
     const [data, companiesRes] = await Promise.all([api("/api/plans" + planListQueryString()), api("/api/companies", { auth: false })]);
     container.innerHTML = `
@@ -693,6 +739,11 @@ function renderForm(planId) {
 }
 
 async function loadForm(container, planId) {
+  const start = clockNow();
+  try { return await loadFormContent(container, planId); }
+  finally { recordDuration("overtime:loadForm", start); }
+}
+async function loadFormContent(container, planId) {
   let plan = {
     workDate: new Date().toISOString().slice(0, 10),
     workType: "점심",
@@ -708,28 +759,22 @@ async function loadForm(container, planId) {
     vendorManagerEmail: "",
     vendorManagerName: "",
   };
-  if (planId) {
-    try {
-      const data = await api("/api/plans/" + encodeURIComponent(planId));
-      plan = data.plan;
-    } catch (e) {
-      container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
-      return;
-    }
+  const planPromise = planId ? api("/api/plans/" + encodeURIComponent(planId)).then((data) => data.plan) : Promise.resolve(plan);
+  const companiesRequest = state.user.org === "vendor" ? Promise.resolve({ companies: [state.user.company] }) : api("/api/companies", { auth: false });
+  const summariesRequest = api("/api/plans").then((data) => data.plans).catch(() => []);
+  const managersRequest = planPromise.then((loadedPlan) => loadedPlan.company
+    ? api("/api/managers?org=vendor&company=" + encodeURIComponent(loadedPlan.company)).then((data) => data.managers).catch(() => [])
+    : []);
+  let formCompanies, plansSummary, vendorManagers;
+  try {
+    let companiesRes;
+    [plan, companiesRes, plansSummary, vendorManagers] = await Promise.all([planPromise, companiesRequest, summariesRequest, managersRequest]);
+    formCompanies = companiesRes.companies;
+  } catch (e) {
+    container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
+    return;
   }
 
-  const companiesRes = await api("/api/companies", { auth: false });
-  // 협력업체는 자기 업체 명의로만 작성할 수 있으므로 업체 선택지를 자기 업체로 제한 (현대건설 단계는 전체)
-  const formCompanies = state.user.org === "vendor" ? [state.user.company] : companiesRes.companies;
-  let plansSummary = [];
-  try { plansSummary = (await api("/api/plans")).plans; } catch (e) {}
-  let vendorManagers = [];
-  if (plan.company) {
-    try {
-      const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(plan.company));
-      vendorManagers = r.managers;
-    } catch (e) {}
-  }
   const vendorManagerIsManual = !plan.vendorManagerEmail && Boolean(cleanName(plan.vendorManagerName));
 
   container.innerHTML = `
@@ -792,8 +837,11 @@ async function loadForm(container, planId) {
       <div class="muted" style="margin-top:6px;">저장 = 임시저장(계속 수정 가능) · 승인요청 = 결재 프로세스 시작</div>
     </div>`;
 
+  let companyRequest = 0;
   document.getElementById("f_company").addEventListener("change", async (e) => {
+    const request = ++companyRequest;
     const r = await api("/api/managers?org=vendor&company=" + encodeURIComponent(e.target.value));
+    if (request !== companyRequest || !container.isConnected) return;
     document.getElementById("f_vendorManager").innerHTML =
       `<option value="">선택</option>` + r.managers.map((m, i) => managerOptionHtml(m, i)).join("") +
       `<option value="__manual__">직접입력</option>`;
@@ -920,6 +968,11 @@ function collectFormData() {
 }
 
 async function savePlanForm(planId, submitAfter) {
+  const start = clockNow();
+  try { return await savePlanFormContent(planId, submitAfter); }
+  finally { recordDuration("overtime:savePlanForm", start); }
+}
+async function savePlanFormContent(planId, submitAfter) {
   const errEl = document.getElementById("formError");
   const body = collectFormData();
   if (!body.workDate || !body.company || !body.workType) {
@@ -971,6 +1024,11 @@ function renderDetail(planId) {
 }
 
 async function loadDetail(container, planId) {
+  const start = clockNow();
+  try { return await loadDetailContent(container, planId); }
+  finally { recordDuration("overtime:loadDetail", start); }
+}
+async function loadDetailContent(container, planId) {
   try {
     const data = await api("/api/plans/" + encodeURIComponent(planId));
     const plan = data.plan;
@@ -1733,6 +1791,41 @@ async function withManagerContacts(plan, cache = new Map()) {
   return result;
 }
 
+// Load export libraries on demand, sharing concurrent loads and allowing retries.
+const exportLibraryPromises = new Map();
+function loadExportLibrary(name) {
+  const libraries = {
+    jspdf: { url: "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js", ready: () => Boolean(window.jspdf?.jsPDF) },
+    jszip: { url: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js", ready: () => Boolean(window.JSZip) },
+  };
+  const library = libraries[name];
+  if (library.ready()) return Promise.resolve();
+  if (!exportLibraryPromises.has(name)) {
+    const promise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      const timeout = setTimeout(() => {
+        script.remove();
+        reject(new Error("PDF 라이브러리 로딩 시간이 초과되었습니다. 다시 시도해주세요."));
+      }, 15000);
+      script.src = library.url;
+      script.async = true;
+      script.onload = () => {
+        clearTimeout(timeout);
+        if (library.ready()) resolve();
+        else { script.remove(); reject(new Error("PDF 라이브러리를 불러올 수 없습니다. 다시 시도해주세요.")); }
+      };
+      script.onerror = () => {
+        clearTimeout(timeout);
+        script.remove();
+        reject(new Error("PDF 라이브러리를 불러올 수 없습니다. 다시 시도해주세요."));
+      };
+      document.head.appendChild(script);
+    }).catch((error) => { exportLibraryPromises.delete(name); throw error; });
+    exportLibraryPromises.set(name, promise);
+  }
+  return exportLibraryPromises.get(name);
+}
+
 // Load the bundled fonts once; jsPDF subsets them to the glyphs used in each PDF.
 let pdfFontsPromise;
 async function loadPdfFonts() {
@@ -1777,7 +1870,7 @@ function drawPdfCell(pdf, text, x, y, width, height, { shaded = false, centered 
 }
 
 async function createPlanPdf(sourcePlan, managerCache) {
-  const [fonts, plan] = await Promise.all([loadPdfFonts(), withManagerContacts(sourcePlan, managerCache)]);
+  const [fonts, plan] = await Promise.all([loadPdfFonts(), withManagerContacts(sourcePlan, managerCache), loadExportLibrary("jspdf")]);
   const pdf = new window.jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true, putOnlyUsedFonts: true });
   ["normal", "bold"].forEach((style, index) => {
     const filename = `NanumGothic-${style}.ttf`;
@@ -1903,6 +1996,11 @@ async function waitForPrintAssets(doc) {
 }
 
 async function openPlanPdf(id) {
+  const start = clockNow();
+  try { return await openPlanPdfContent(id); }
+  finally { recordDuration("overtime:openPlanPdf", start); }
+}
+async function openPlanPdfContent(id) {
   const preview = window.open("", "_blank");
   if (!preview) return alert("PDF 미리보기 새 탭을 열 수 없습니다. 브라우저의 팝업 차단을 해제해주세요.");
   preview.document.write("<!doctype html><title>작업계획서 PDF 준비 중</title><p style='font-family:sans-serif;padding:24px'>작업계획서 PDF를 준비하고 있습니다...</p>");
@@ -1940,6 +2038,11 @@ function updateBatchDateLimit() {
 
 let batchDownloadInProgress = false;
 async function batchDownload() {
+  const start = clockNow();
+  try { return await batchDownloadContent(); }
+  finally { recordDuration("overtime:batchDownload", start); }
+}
+async function batchDownloadContent() {
   if (batchDownloadInProgress) return;
   const from = document.getElementById("batchFrom").value;
   const to = document.getElementById("batchTo").value;
@@ -1959,7 +2062,8 @@ async function batchDownload() {
       if (progress) progress.textContent = "해당 기간에 작업계획서가 없습니다.";
       return;
     }
-    const zip = new JSZip();
+    await Promise.all([loadExportLibrary("jspdf"), loadExportLibrary("jszip")]);
+    const zip = new window.JSZip();
     const managerCache = new Map();
     let done = 0;
     for (const p of data.plans) {

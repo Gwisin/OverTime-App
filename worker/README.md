@@ -25,7 +25,7 @@ Configure these values in Cloudflare rather than in source code:
 - `ALLOWED_ORIGIN`: required comma-separated list of deployed frontend origins; browser requests fail closed when omitted
 - `ADMIN_EMAILS`: comma-separated administrator email addresses
 
-The production Worker only accepts Google ID tokens. Remove any legacy `TEST_LOGIN_SECRET` setting from Cloudflare before deployment.
+The production Worker only accepts Google ID tokens. It verifies RS256 signatures using Web Crypto and Google's rotating public keys from `https://www.googleapis.com/oauth2/v3/certs`. Only public keys are cached (following the response max-age); tokens and account status are not cached. The existing `GOOGLE_CLIENT_ID` configuration and email-keyed user records are retained. No new secrets, packages, build step, or data migration are needed. Remove any legacy `TEST_LOGIN_SECRET` setting from Cloudflare before deployment.
 
 ## Local checks
 

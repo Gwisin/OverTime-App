@@ -357,3 +357,135 @@ test("batch manager cache reuses directory requests for multiple plans", async (
   assert.equal(first.vendorManagerPhone, "010-1234-5678");
   assert.equal(second.hyundaiManagerPhone, "010-1234-5678");
 });
+
+function response(data, ok = true) { return { ok, json: async () => data }; }
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test("directory cache shares requests, expires, and isolates login tokens", async () => {
+  let now = 0;
+  let calls = 0;
+  const pending = deferred();
+  const context = makeContext(async () => { calls++; return calls === 1 ? pending.promise : response({ managers: [] }); }, {
+    Date: class extends Date { static now() { return now; } },
+  });
+  vm.runInContext('state.idToken = "account-a"', context);
+  const first = context.api("/api/managers?org=hyundai");
+  const second = context.api("/api/managers?org=hyundai");
+  assert.equal(calls, 1);
+  pending.resolve(response({ managers: [] }));
+  await Promise.all([first, second]);
+  await context.api("/api/managers?org=hyundai");
+  assert.equal(calls, 1);
+  now = 30001;
+  await context.api("/api/managers?org=hyundai");
+  assert.equal(calls, 2);
+  vm.runInContext('state.idToken = "account-b"', context);
+  await context.api("/api/managers?org=hyundai");
+  assert.equal(calls, 3);
+});
+
+test("writes invalidate directories and in-flight reads cannot repopulate stale cache", async () => {
+  const pending = deferred();
+  let reads = 0;
+  const context = makeContext(async (_url, init) => {
+    if (init.method === "POST") return response({ ok: true });
+    reads++;
+    return reads === 1 ? pending.promise : response({ companies: ["updated"] });
+  });
+  const stale = context.api("/api/companies", { auth: false });
+  await context.api("/api/admin/rename-company", { method: "POST", body: {} });
+  pending.resolve(response({ companies: ["old"] }));
+  await stale;
+  const fresh = await context.api("/api/companies", { auth: false });
+  assert.equal(fresh.companies[0], "updated");
+  assert.equal(reads, 2);
+});
+
+test("failed directory requests retry and plans are always fetched fresh", async () => {
+  let calls = 0;
+  const context = makeContext(async () => { calls++; return response(calls === 1 ? { error: "failed" } : {}, calls !== 1); });
+  await assert.rejects(context.api("/api/companies"), /failed/);
+  await context.api("/api/companies");
+  await context.api("/api/plans");
+  await context.api("/api/plans");
+  assert.equal(calls, 4);
+});
+
+test("new vendor form starts independent requests together and skips company lookup", async () => {
+  const calls = [];
+  const plans = deferred(), managers = deferred();
+  const elements = Object.fromEntries(["f_company", "f_workDate", "f_workDateLabel", "f_workType", "f_vendorManager", "f_vendorManagerManual", "f_startHour", "f_startMin", "f_endHour", "f_endMin"].map((id) => [id, {
+    value: id === "f_workType" ? "점심" : id === "f_workDate" ? "2026-10-11" : "", addEventListener() {},
+    classList: { add() {}, toggle() {} },
+  }]));
+  const context = makeContext(async (url) => {
+    calls.push(url);
+    if (url.endsWith("/api/plans")) return plans.promise;
+    if (url.includes("/api/managers?")) return managers.promise;
+    assert.fail(`Unexpected request: ${url}`);
+  }, { document: { getElementById: (id) => elements[id] } });
+  context.__setStateUser({ company: "협력사", org: "vendor" });
+  const container = { innerHTML: "", querySelector: () => null };
+  const loading = context.loadForm(container);
+  await new Promise(setImmediate);
+  assert.equal(calls.length, 2);
+  assert.equal(calls.some((url) => url.includes("/companies")), false);
+  plans.resolve(response({ plans: [] }));
+  managers.resolve(response({ managers: [] }));
+  await loading;
+  assert.match(container.innerHTML, /작업계획서 작성/);
+  assert.equal(elements.f_startHour.value, "11");
+  assert.equal(elements.f_endHour.value, "13");
+});
+
+test("PDF libraries load on demand, share loads, and recover from errors", async () => {
+  assert.doesNotMatch(html, /<script src="https:\/\/cdnjs[^\"]*(?:jspdf|jszip)/);
+  const scripts = [];
+  const context = makeContext(undefined, { document: {
+    createElement: () => ({ remove() {} }), head: { appendChild: (script) => scripts.push(script) },
+  } });
+  const first = context.loadExportLibrary("jspdf");
+  const second = context.loadExportLibrary("jspdf");
+  assert.equal(first, second);
+  assert.equal(scripts.length, 1);
+  scripts[0].onerror();
+  await assert.rejects(first, /PDF 라이브러리/);
+  const retry = context.loadExportLibrary("jspdf");
+  assert.equal(scripts.length, 2);
+  context.window.jspdf = { jsPDF() {} };
+  scripts[1].onload();
+  await retry;
+  await context.loadExportLibrary("jspdf");
+  assert.equal(scripts.length, 2);
+});
+
+test("PDF library timeout permits a new attempt", async () => {
+  const scripts = [], timers = new Map();
+  let id = 0;
+  const context = makeContext(undefined, {
+    setTimeout: (callback) => { timers.set(++id, callback); return id; }, clearTimeout: (key) => timers.delete(key),
+    document: { createElement: () => ({ remove() {} }), head: { appendChild: (script) => scripts.push(script) } },
+  });
+  const loading = context.loadExportLibrary("jszip");
+  timers.get(1)();
+  await assert.rejects(loading, /초과/);
+  const retry = context.loadExportLibrary("jszip");
+  context.window.JSZip = function () {};
+  scripts[1].onload();
+  await retry;
+  assert.equal(scripts.length, 2);
+});
+
+test("performance measurements omit tokens and plan IDs", async () => {
+  const names = [];
+  const context = makeContext(async () => response({ plan: {} }), { performance: {
+    now: () => 100, clearMeasures() {}, measure: (name) => names.push(name),
+  } });
+  vm.runInContext('state.idToken = "secret-token"', context);
+  await context.api("/api/plans/private-plan-id");
+  assert.deepEqual(names, ["overtime:api:GET:/api/plans/:id"]);
+});

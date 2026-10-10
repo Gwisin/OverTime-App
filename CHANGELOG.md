@@ -6,6 +6,12 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ### Changed
 
+- Measure frontend route/API/export durations locally and expose Worker operation durations and call counts through `Server-Timing`.
+- Parallelize independent plan-form reads; skip company lookup for vendor forms; reuse short-lived company and manager directory requests with account isolation and invalidation after writes.
+- Load PDF/ZIP libraries only when exporting, with shared loads, timeouts and retries.
+- Verify Google ID-token signatures inside the Worker with cached rotating Google public keys; continue checking live account status on every protected request and preserve email-keyed stored records.
+- Reuse the authorized plan read during submission instead of fetching the same plan again.
+
 - Generate single and batch plan PDFs with selectable Korean text and vector tables; retain signature images and per-plan ZIP downloads.
 - Limit batch downloads to one inclusive calendar month, show progress, prevent concurrent downloads, and reuse font and manager-directory loads.
 

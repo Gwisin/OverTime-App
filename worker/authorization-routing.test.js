@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import worker from "./worker.js";
+import { signedToken, keysResponse } from "./test-support/google-token.js";
+let activeToken = signedToken();
 
 const env = {
   ADMIN_EMAILS: "admin@example.com",
@@ -62,9 +64,7 @@ function mockExternalRequests({ email = "vendor@example.com", users = approvedUs
     const method = init.method || (typeof input === "string" ? "GET" : input.method) || "GET";
     calls.push({ url, method, body: init.body });
 
-    if (url.hostname === "oauth2.googleapis.com") {
-      return Response.json({ aud: env.GOOGLE_CLIENT_ID, email, email_verified: "true", name: email });
-    }
+    if (url.href === "https://www.googleapis.com/oauth2/v3/certs") return keysResponse();
 
     if (url.hostname === "api.github.com") {
       const marker = "/contents/";
@@ -86,7 +86,7 @@ function mockExternalRequests({ email = "vendor@example.com", users = approvedUs
   return { calls, fetch };
 }
 
-async function request(path, { method = "GET", body, token = "google-token", origin } = {}) {
+async function request(path, { method = "GET", body, token = activeToken, origin } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -100,12 +100,15 @@ async function request(path, { method = "GET", body, token = "google-token", ori
 
 async function withMockFetch(options, callback) {
   const originalFetch = globalThis.fetch;
+  const previousToken = activeToken;
+  activeToken = signedToken(options.email || "vendor@example.com");
   const mock = mockExternalRequests(options);
   globalThis.fetch = mock.fetch;
   try {
     await callback(mock.calls);
   } finally {
     globalThis.fetch = originalFetch;
+    activeToken = previousToken;
   }
 }
 
@@ -410,9 +413,7 @@ test("internal upstream errors do not expose GitHub response details", async () 
   const originalConsoleError = console.error;
   globalThis.fetch = async (input) => {
     const url = new URL(typeof input === "string" ? input : input.url);
-    if (url.hostname === "oauth2.googleapis.com") {
-      return Response.json({ aud: env.GOOGLE_CLIENT_ID, email: "vendor@example.com", email_verified: "true", name: "Vendor" });
-    }
+    if (url.href === "https://www.googleapis.com/oauth2/v3/certs") return keysResponse();
     if (url.hostname === "api.github.com") return new Response("private repository detail", { status: 500 });
     throw new Error(`Unexpected external request: ${url}`);
   };
@@ -629,6 +630,7 @@ test("submission requires a vendor resident manager but does not require a Hyund
     const payload = JSON.parse(planPut.body);
     const saved = JSON.parse(Buffer.from(payload.content, "base64").toString());
     assert.equal(saved.vendorManagerName, "미가입 현장소장");
+    assert.equal(calls.filter(({ method, url }) => method === "GET" && url.pathname.endsWith("/data/plans/manual-manager.json")).length, 1);
     assert.equal(saved.hyundaiManagerName, "");
   });
 });
