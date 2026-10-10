@@ -86,6 +86,28 @@ test("list badges distinguish rejected drafts without changing workflow status",
   assert.match(context.planCardHtml({ ...plan, status: "pending" }), /badge pending">검토중/);
 });
 
+test("detail badges match list badges while rejected drafts remain editable and submittable", async () => {
+  const plan = { id: "plan-1", status: "draft", company: "협력사", writerEmail: "writer@example.com", rejectedAt: "2026-10-11T00:00:00Z" };
+  const context = makeContext(async () => ({ ok: true, json: async () => ({ plan }) }));
+  context.__setStateUser({ email: plan.writerEmail, company: plan.company, org: "vendor", isAdmin: false });
+  const container = { innerHTML: "", querySelector: () => null };
+
+  await context.loadDetail(container, plan.id);
+  assert.match(container.innerHTML, /badge rejected">반려/);
+  assert.match(container.innerHTML, /id="detailEditButton"/);
+  assert.match(container.innerHTML, /id="detailSubmitButton"/);
+  assert.equal(plan.status, "draft");
+
+  plan.rejectedAt = null;
+  await context.loadDetail(container, plan.id);
+  assert.match(container.innerHTML, /badge draft">작성중/);
+
+  plan.status = "pending";
+  plan.rejectedAt = "2026-10-11T00:00:00Z";
+  await context.loadDetail(container, plan.id);
+  assert.match(container.innerHTML, /badge pending">검토중/);
+});
+
 function formSaveContext() {
   const elements = {
     formError: { textContent: "이전 오류" },
