@@ -10,7 +10,7 @@ function corsHeaders(env) {
   return {
     ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin } : {}),
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-OverTime-Test-Mode",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
@@ -200,6 +200,17 @@ function effectiveOrg(env, email, record) {
 }
 function tierOf(env, email, record) {
   return isAdminEmail(env, email) ? "admin" : recordOrg(record);
+}
+
+// ADMIN identity is verified on every request; test mode only reduces its permissions.
+function applyVendorTestMode(request, env, user) {
+  const mode = request.headers.get("X-OverTime-Test-Mode");
+  if (!mode) return user;
+  if (!isAdminEmail(env, user.email)) {
+    throw publicError(403, "ADMIN만 업체 테스트 모드를 사용할 수 있습니다.", "FORBIDDEN");
+  }
+  if (mode !== "vendor") throw publicError(400, "잘못된 테스트 모드입니다.", "INVALID_TEST_MODE");
+  return { ...user, company: "[테스트] 협력업체", org: "vendor", tier: "vendor", isAdmin: false, vendorTestMode: true };
 }
 
 // 로그인 응답과 보호 API가 동일한 계정 상태 규칙을 사용하도록 한 곳에서 판정한다.
@@ -393,13 +404,13 @@ async function handleAuth(request, env) {
   return json(
     {
       status: "approved",
-      user: {
-        email: googleUser.email,
+      user: applyVendorTestMode(request, env, {
         ...record,
+        email: googleUser.email,
         org: effectiveOrg(env, googleUser.email, record),
         tier: tierOf(env, googleUser.email, record),
         isAdmin: isAdminEmail(env, googleUser.email),
-      },
+      }),
     },
     200,
     env
@@ -1273,14 +1284,14 @@ const worker = {
       if (accountStatusOf(userRecord) !== "approved") {
         return json({ error: "승인되지 않은 계정입니다." }, 403, env);
       }
-      const currentUser = {
+      const currentUser = applyVendorTestMode(request, env, {
         email: currentUserGoogle.email,
         name: userRecord.name,
         company: userRecord.company,
         org: effectiveOrg(env, currentUserGoogle.email, userRecord), // ADMIN은 항상 hyundai
         tier: tierOf(env, currentUserGoogle.email, userRecord),
         isAdmin: isAdminEmail(env, currentUserGoogle.email),
-      };
+      });
 
       if (path === "/api/managers" && request.method === "GET") return await handleManagers(request, env, url, currentUser, usersFile);
       if (path === "/api/users/pending" || path === "/api/users/approve") {

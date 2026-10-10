@@ -6,6 +6,8 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ### Changed
 
+- Add an ADMIN-only vendor test mode using the existing Google identity; apply vendor permissions on every Worker request without changing the stored account.
+
 - Allow ADMIN accounts to delete approved and rejected plans from the detail view; preserve existing deletion permissions for other accounts.
 
 - Measure frontend route/API/export durations locally and expose Worker operation durations and call counts through `Server-Timing`.

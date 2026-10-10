@@ -44,3 +44,9 @@ npm --prefix worker test
 4. Perform login and API smoke tests.
 5. Add the deployed commit, version, date, and result to `DEPLOYMENTS.md`.
 6. If an emergency edit is made in Cloudflare, copy the complete deployed source back into `worker/worker.js`, test it, and commit it before starting other work.
+
+## ADMIN vendor test mode
+
+After Google login, ADMIN accounts can use **마이페이지 → 업체 사용자로 전환**. The frontend sends `X-OverTime-Test-Mode: vendor`; the Worker verifies the live approved account and `ADMIN_EMAILS` on each request, then applies vendor permissions for the fixed company `[테스트] 협력업체`. No user record, signature, or Google identity is replaced. Test plans use the normal production data store and the real ADMIN email as their author. Existing vendor rules apply, including read-only all-company lists and author access to their own plans.
+
+The banner provides **ADMIN으로 돌아가기**. Reloading or logging out also clears the mode. Deploy both the frontend and Worker; the frontend refuses to enter test mode if the Worker does not explicitly confirm it. No additional secrets or environment settings are required.

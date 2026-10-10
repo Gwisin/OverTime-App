@@ -271,7 +271,7 @@ test("identity and registration views escape user and company values", () => {
   const created = [];
   const document = {
     createElement() {
-      const element = { innerHTML: "", className: "" };
+      const element = { innerHTML: "", className: "", querySelector: () => null };
       created.push(element);
       return element;
     },
@@ -507,4 +507,75 @@ test("detail deletion matches ADMIN and existing role permissions", async () => 
       assert.equal(container.innerHTML.includes('id="detailDeleteButton"'), allowed, `${role}: ${status}`);
     }
   }
+});
+
+
+test("vendor test mode sends the role header and isolates directory cache", async () => {
+  const calls = [];
+  const context = makeContext(async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ managers: [] }) };
+  });
+  vm.runInContext('state.idToken = "admin-token"', context);
+  await context.api("/api/managers?org=vendor");
+  vm.runInContext('state.vendorTestMode = true', context);
+  await context.api("/api/managers?org=vendor");
+  await context.api("/api/auth", { method: "POST", body: { idToken: "admin-token" }, auth: false });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].options.headers["X-OverTime-Test-Mode"], undefined);
+  assert.equal(calls[1].options.headers["X-OverTime-Test-Mode"], "vendor");
+  assert.equal(calls[2].options.headers["X-OverTime-Test-Mode"], "vendor");
+  assert.equal(calls[1].options.headers.Authorization, "Bearer admin-token");
+});
+
+test("mode switching accepts server roles and rolls back if an old Worker ignores the header", async () => {
+  let supported = false;
+  const messages = [];
+  const context = makeContext(async (url, options) => ({ ok: true, json: async () => ({ status: "approved", user: supported && options.headers["X-OverTime-Test-Mode"] ? { org: "vendor", isAdmin: false, vendorTestMode: true } : { org: "hyundai", isAdmin: true } }) }), { alert: message => messages.push(message) });
+  vm.runInContext('state.user = { org: "hyundai", isAdmin: true }; state.idToken = "token"; go = () => {}; refreshSignupCount = () => {};', context);
+  await context.switchVendorTestMode(true);
+  assert.equal(vm.runInContext('state.vendorTestMode', context), false);
+  assert.equal(vm.runInContext('state.user.isAdmin', context), true);
+  assert.match(messages[0], /최신 Worker/);
+  supported = true;
+  await context.switchVendorTestMode(true);
+  assert.equal(vm.runInContext('state.user.org', context), "vendor");
+  assert.equal(context.canManageSignups(), false);
+  await context.switchVendorTestMode(false);
+  assert.equal(vm.runInContext('state.user.isAdmin', context), true);
+  assert.equal(vm.runInContext('state.vendorTestMode', context), false);
+});
+
+test("vendor test controls are ADMIN-only and the return banner remains visible", () => {
+  const created = [];
+  const document = {
+    body: { classList: { toggle() {} } },
+    createElement() {
+      const element = { innerHTML: "", appendChild() {}, querySelector(selector) {
+        return this.innerHTML.includes(`id="${selector.slice(1)}"`) ? { addEventListener() {} } : null;
+      } };
+      created.push(element);
+      return element;
+    },
+    getElementById() { return { innerHTML: "", appendChild() {} }; },
+  };
+  const context = makeContext(undefined, { document, setTimeout() {} });
+  context.__setStateUser({ name: "Admin", company: "현대건설", org: "hyundai", isAdmin: true });
+  assert.match(context.renderMyPage().innerHTML, /id="enterVendorTestMode"/);
+  context.__setStateUser({ name: "Admin", company: "[테스트] 협력업체", org: "vendor", isAdmin: false, vendorTestMode: true });
+  assert.doesNotMatch(context.renderMyPage().innerHTML, /id="enterVendorTestMode"|가입 승인 관리|사용자 관리/);
+  vm.runInContext('renderRoute = () => document.createElement("div")', context);
+  context.render();
+  assert.ok(created.some(element => element.innerHTML.includes('id="exitVendorTestMode"')));
+});
+
+test("safety-first approval keeps the execution button available after ADMIN restoration", async () => {
+  const plan = { id: "test-plan", company: "[테스트] 협력업체", status: "pending", workDate: "2026-10-11", safetyApproval: { approverName: "Admin", approvedAt: "2026-10-11T01:00:00Z" } };
+  const context = makeContext(async url => ({ ok: true, json: async () => url.includes("/api/managers") ? { managers: [] } : { plan } }));
+  context.__setStateUser({ org: "hyundai", isAdmin: true });
+  const container = { innerHTML: "", querySelector: () => null };
+  await context.loadDetail(container, plan.id);
+  assert.match(container.innerHTML, /id="detailExecutionReviewButton"/);
+  assert.doesNotMatch(container.innerHTML, /id="detailSafetyApproveButton"/);
+  assert.match(container.innerHTML, /badge pending">검토중/);
 });
