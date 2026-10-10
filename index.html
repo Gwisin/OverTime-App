@@ -48,6 +48,7 @@
   header.topbar .userinfo span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header.topbar .userinfo span:first-child { color: var(--text); font-weight: 600; }
   button.link { height: auto; padding: 6px 2px; border: none; background: none; color: var(--accent); font-size: 12px; font-weight: 500; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
+  .signup-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin-left: 4px; padding: 0 4px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; font-weight: 700; vertical-align: middle; }
 
   main { max-width: 760px; margin: 0 auto; padding: 16px; }
 
@@ -219,6 +220,7 @@ const state = {
   planViewFilter: "", // "" = 역할별 기본값(협력업체는 내 업체, 현대건설/ADMIN은 전체), "__all__" = 전체, 그 외 = 특정 업체명
   route: "login",
   currentPlan: null,
+  pendingSignupCount: null,
 };
 
 /* =========================================================
@@ -291,6 +293,40 @@ function render() {
   app.appendChild(main);
 }
 
+function canManageSignups() {
+  return Boolean(state.user && (state.user.org === "hyundai" || state.user.isAdmin));
+}
+function signupCountHtml() {
+  const count = state.pendingSignupCount;
+  return canManageSignups() && count > 0
+    ? `<span class="signup-count" aria-label="가입 승인 대기 ${count}건">${count}</span>` : "";
+}
+function updateSignupCount(count) {
+  state.pendingSignupCount = count;
+  document.querySelectorAll("[data-signup-count]").forEach((el) => {
+    el.innerHTML = signupCountHtml();
+  });
+}
+let signupCountRequest = 0;
+async function refreshSignupCount() {
+  if (!canManageSignups()) return;
+  const request = ++signupCountRequest;
+  const token = state.idToken;
+  try {
+    const data = await api("/api/users/pending");
+    if (request === signupCountRequest && token === state.idToken && canManageSignups()) {
+      updateSignupCount(data.pending.length);
+    }
+  } catch (e) {
+    // 알림 조회 실패가 작업계획서 조회를 막지 않도록 한다.
+    if (request === signupCountRequest && token === state.idToken) updateSignupCount(null);
+  }
+}
+function refreshHome() {
+  go("home");
+  refreshSignupCount();
+}
+
 function renderHeader() {
   const header = document.createElement("header");
   header.className = "topbar";
@@ -299,10 +335,10 @@ function renderHeader() {
     return header;
   }
   header.innerHTML = `
-    <div class="title" style="cursor:pointer" onclick="go('home')">보충작업계획서</div>
+    <div class="title" style="cursor:pointer" onclick="refreshHome()">보충작업계획서</div>
     <div class="user">
       <div class="userinfo"><span>${esc(state.user.name)}</span><span>${esc(state.user.company)}</span></div>
-      <button class="link" onclick="go('mypage')">마이페이지</button>
+      <button class="link" onclick="go('mypage')">마이페이지<span data-signup-count aria-live="polite">${signupCountHtml()}</span></button>
       <button class="link" onclick="logout()">로그아웃</button>
     </div>`;
   return header;
@@ -388,7 +424,9 @@ async function onGoogleCredential(response) {
     state.authStatus = data.status;
     if (data.status === "approved") {
       state.user = data.user;
+      state.pendingSignupCount = null;
       go("home");
+      refreshSignupCount();
     } else {
       state.pendingRegisterInfo = { email: data.email, name: data.name };
       render();
@@ -402,6 +440,8 @@ function logout() {
   localStorage.removeItem("idToken");
   state.idToken = null;
   state.user = null;
+  state.pendingSignupCount = null;
+  signupCountRequest++;
   state.authStatus = null;
   go("login");
 }
@@ -626,7 +666,6 @@ async function loadHome(container) {
     const [data, companiesRes] = await Promise.all([api("/api/plans" + planListQueryString()), api("/api/companies", { auth: false })]);
     container.innerHTML = `
       <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
-      ${state.user.org === "hyundai" || state.user.isAdmin ? `<div class="row" style="margin-top:10px;"><button onclick="go('admin')">가입 승인 관리</button>${state.user.isAdmin ? `<button onclick="go('users')">사용자 관리</button>` : ""}</div>` : ""}
       <label style="margin-top:18px;">조회 범위</label>
       <select id="planViewFilter">${planViewFilterOptionsHtml(companiesRes.companies)}</select>
       <h2 class="section-title">작업계획서 목록</h2>
@@ -1102,6 +1141,13 @@ function renderMyPage() {
       <h2>내 정보</h2>
       <p class="muted">${esc(state.user.name)} · ${esc(state.user.company)} (${state.user.isAdmin ? "현대건설 · ADMIN" : state.user.org === "hyundai" ? "현대건설" : "협력업체"})</p>
     </div>
+    ${canManageSignups() ? `<div class="card">
+      <h2>관리 메뉴</h2>
+      <div class="row">
+        <button onclick="go('admin')">가입 승인 관리<span data-signup-count aria-live="polite">${signupCountHtml()}</span></button>
+        ${state.user.isAdmin ? `<button onclick="go('users')">사용자 관리</button>` : ""}
+      </div>
+    </div>` : ""}
     <div class="card">
       <h2>내 서명</h2>
       <div id="sigPreview"></div>
@@ -1219,6 +1265,7 @@ function renderAdmin() {
 async function loadAdmin(container) {
   try {
     const data = await api("/api/users/pending");
+    updateSignupCount(data.pending.length);
     container.innerHTML = `
       <div class="card">
         <h2>가입 승인 대기</h2>
@@ -1985,7 +2032,9 @@ function bootAuth() {
       state.authStatus = data.status;
       if (data.status === "approved") {
         state.user = data.user;
+        state.pendingSignupCount = null;
         go("home");
+        refreshSignupCount();
       } else {
         render();
       }

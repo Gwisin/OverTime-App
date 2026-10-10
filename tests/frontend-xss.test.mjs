@@ -19,6 +19,7 @@ function makeContext(fetchImpl = async () => { throw new Error("unexpected fetch
     fetch: fetchImpl,
     setTimeout,
     window: { addEventListener() {} },
+    document: { querySelectorAll() { return []; } },
     ...extra,
   };
   vm.createContext(context);
