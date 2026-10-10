@@ -356,3 +356,130 @@ test("batch manager cache reuses directory requests for multiple plans", async (
   assert.equal(first.vendorManagerPhone, "010-1234-5678");
   assert.equal(second.hyundaiManagerPhone, "010-1234-5678");
 });
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
+
+test("company choices share concurrent requests, expire after 60 seconds and retry failures", async () => {
+  const requests = [];
+  const context = makeContext(() => {
+    const request = deferred();
+    requests.push(request);
+    return request.promise;
+  });
+  vm.runInContext("globalThis.__now = 0; Date.now = () => globalThis.__now;", context);
+  const first = context.loadCompanies();
+  const second = context.loadCompanies();
+  assert.equal(requests.length, 1);
+  requests[0].resolve({ ok: true, json: async () => ({ companies: ["A"] }) });
+  assert.equal((await first).companies[0], "A");
+  await second;
+  context.__now = 59999;
+  await context.loadCompanies();
+  assert.equal(requests.length, 1);
+  context.__now = 60000;
+  const expired = context.loadCompanies();
+  requests[1].reject(new Error("offline"));
+  await assert.rejects(expired, /offline/);
+  const retry = context.loadCompanies();
+  assert.equal(requests.length, 3);
+  requests[2].resolve({ ok: true, json: async () => ({ companies: ["B"] }) });
+  assert.equal((await retry).companies[0], "B");
+});
+
+function formDocument() {
+  const elements = new Map();
+  return { getElementById(id) {
+    if (!elements.has(id)) elements.set(id, {
+      value: id === "f_workDate" ? "2026-10-10" : "", addEventListener() {},
+      classList: { add() {}, toggle() {} },
+    });
+    return elements.get(id);
+  } };
+}
+
+test("new vendor form starts summary and manager reads together without company fetch", async () => {
+  const requests = new Map();
+  const context = makeContext((url) => {
+    const request = deferred();
+    requests.set(new URL(url).pathname, request);
+    return request.promise;
+  }, { document: formDocument() });
+  context.__setStateUser({ org: "vendor", company: "A" });
+  const container = { innerHTML: "", querySelector: () => null };
+  const loading = context.loadForm(container);
+  await flushPromises();
+  assert.deepEqual([...requests.keys()].sort(), ["/api/managers", "/api/plans"]);
+  // Optional reads still allow the form to render when they fail.
+  for (const request of requests.values()) request.reject(new Error("offline"));
+  await loading;
+  assert.match(container.innerHTML, /작업계획서 작성/);
+  assert.match(container.innerHTML, /<option value="A" selected>A<\/option>/);
+});
+
+test("edit form starts independent reads before detail and waits for its company for managers", async () => {
+  const requests = new Map();
+  const context = makeContext((url) => {
+    const request = deferred();
+    requests.set(url.split("/api/")[1], request);
+    return request.promise;
+  }, { document: formDocument() });
+  context.__setStateUser({ org: "hyundai", company: "현대건설" });
+  const container = { innerHTML: "", querySelector: () => null };
+  const loading = context.loadForm(container, "p1");
+  assert.deepEqual([...requests.keys()].sort(), ["companies", "plans", "plans/p1"]);
+  requests.get("plans/p1").resolve({ ok: true, json: async () => ({ plan: { company: "A", workDate: "2026-10-10" } }) });
+  await flushPromises();
+  assert.ok(requests.has("managers?org=vendor&company=A"));
+  requests.get("companies").resolve({ ok: true, json: async () => ({ companies: ["A"] }) });
+  requests.get("plans").resolve({ ok: true, json: async () => ({ plans: [] }) });
+  requests.get("managers?org=vendor&company=A").resolve({ ok: true, json: async () => ({ managers: [] }) });
+  await loading;
+  assert.match(container.innerHTML, /작업계획서 수정/);
+});
+
+test("failed edit detail renders an error without fetching managers", async () => {
+  const calls = [];
+  const context = makeContext(async (url) => {
+    calls.push(url);
+    if (url.includes("/api/plans/")) throw new Error("detail unavailable");
+    return { ok: true, json: async () => ({ plans: [] }) };
+  });
+  context.__setStateUser({ org: "vendor", company: "A" });
+  const container = { innerHTML: "" };
+  await context.loadForm(container, "p1");
+  assert.match(container.innerHTML, /detail unavailable/);
+  assert.equal(calls.some((url) => url.includes("/api/managers")), false);
+});
+
+test("export libraries are lazy, deduplicate loads and retry a failed script", async () => {
+  assert.doesNotMatch(html, /<script[^>]+src="[^"]*(?:jspdf|jszip)/i);
+  const scripts = [];
+  const context = makeContext(undefined, { document: {
+    createElement: () => ({ remove() { this.removed = true; } }),
+    head: { appendChild: (script) => scripts.push(script) },
+  } });
+  assert.equal(scripts.length, 0);
+  const first = context.loadExportLibrary("jspdf");
+  const second = context.loadExportLibrary("jspdf");
+  assert.equal(scripts.length, 1);
+  context.window.jspdf = { jsPDF() {} };
+  scripts[0].onload();
+  await Promise.all([first, second]);
+  await context.loadExportLibrary("jspdf");
+  assert.equal(scripts.length, 1);
+  const failed = context.loadExportLibrary("jszip");
+  scripts[1].onerror();
+  await assert.rejects(failed, /다시 시도/);
+  assert.equal(scripts[1].removed, true);
+  const retry = context.loadExportLibrary("jszip");
+  assert.equal(scripts.length, 3);
+  context.window.JSZip = function JSZip() {};
+  scripts[2].onload();
+  await retry;
+});
