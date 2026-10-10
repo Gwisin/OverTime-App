@@ -1044,6 +1044,7 @@ async function loadDetailContent(container, planId) {
     const canEdit = plan.status !== "approved" && canManage;
     const canSubmit = plan.status === "draft" && canManage;
     const canDelete =
+      (state.user.isAdmin && ["approved", "rejected"].includes(plan.status)) ||
       (plan.status === "draft" && (state.user.email === plan.writerEmail || state.user.org === "hyundai")) ||
       (["pending", "approving"].includes(plan.status) && state.user.org === "hyundai");
     let hyundaiManagers = [];

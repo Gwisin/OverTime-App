@@ -917,7 +917,7 @@ test("plan routes reject path traversal and control-character IDs before GitHub 
   }
 });
 
-test("approved plans cannot be deleted by vendor, Hyundai, or ADMIN", async () => {
+test("approved plans cannot be deleted by vendor or non-ADMIN Hyundai", async () => {
   const files = {
     "data/plans/approved-plan.json": {
       id: "approved-plan",
@@ -926,11 +926,47 @@ test("approved plans cannot be deleted by vendor, Hyundai, or ADMIN", async () =
       writerEmail: "vendor@example.com",
     },
   };
-  for (const email of ["vendor@example.com", "hyundai@example.com", "admin@example.com"]) {
+  for (const email of ["vendor@example.com", "hyundai@example.com"]) {
     await withMockFetch({ email, files }, async (calls) => {
       const response = await request("/api/plans/approved-plan", { method: "DELETE" });
       assert.equal(response.status, 400, email);
       assert.equal(calls.some(({ method }) => method === "DELETE"), false, email);
     });
+  }
+});
+
+
+test("plan deletion enforces role and status permissions and preserves other index entries", async () => {
+  for (const status of ["draft", "pending", "approving", "approved", "rejected", "unknown"]) {
+    for (const email of ["vendor@example.com", "other@example.com", "hyundai@example.com", "admin@example.com"]) {
+      const plan = { id: "target-plan", company: "협력사", status, writerEmail: "vendor@example.com" };
+      const other = { id: "other-plan", status: "approved", company: "다른협력사" };
+      const files = { "data/plans/target-plan.json": plan, "data/index.json": [plan, other] };
+      await withMockFetch({ email, files }, async (calls) => {
+        const allowed = status === "draft" ? email !== "other@example.com"
+          : ["pending", "approving"].includes(status) ? ["hyundai@example.com", "admin@example.com"].includes(email)
+            : ["approved", "rejected"].includes(status) && email === "admin@example.com";
+        const response = await request("/api/plans/target-plan", { method: "DELETE" });
+        const label = `${email}: ${status}`;
+        if (!allowed) {
+          assert.ok([400, 403].includes(response.status), label);
+          assert.equal(calls.some(({ method }) => method === "DELETE" || method === "PUT"), false, label);
+          return;
+        }
+        assert.equal(response.status, 200, label);
+        assert.deepEqual(await response.json(), { ok: true });
+        const deletes = calls.filter(({ method }) => method === "DELETE");
+        assert.equal(deletes.length, 1, label);
+        assert.ok(decodeURIComponent(deletes[0].url.pathname).endsWith("/data/plans/target-plan.json"));
+        const deleted = JSON.parse(deletes[0].body);
+        assert.equal(deleted.sha, "data/plans/target-plan.json-sha");
+        assert.ok(deleted.message.includes(`actor=${email}`));
+        const puts = calls.filter(({ method }) => method === "PUT");
+        assert.equal(puts.length, 1);
+        assert.ok(decodeURIComponent(puts[0].url.pathname).endsWith("/data/index.json"));
+        const saved = JSON.parse(Buffer.from(JSON.parse(puts[0].body).content, "base64").toString());
+        assert.deepEqual(saved, [other]);
+      });
+    }
   }
 });

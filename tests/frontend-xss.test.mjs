@@ -489,3 +489,22 @@ test("performance measurements omit tokens and plan IDs", async () => {
   await context.api("/api/plans/private-plan-id");
   assert.deepEqual(names, ["overtime:api:GET:/api/plans/:id"]);
 });
+
+
+test("detail deletion matches ADMIN and existing role permissions", async () => {
+  for (const status of ["draft", "pending", "approving", "approved", "rejected", "unknown"]) {
+    for (const role of ["writer", "vendor", "hyundai", "admin"]) {
+      const plan = { id: "plan-1", company: "협력사", status, writerEmail: "writer@example.com", workDate: "2026-10-11", workType: "점심" };
+      const context = makeContext(async (url) => ({
+        ok: true, json: async () => url.includes("/api/managers") ? { managers: [] } : { plan },
+      }));
+      context.__setStateUser({ email: `${role}@example.com`, company: "협력사", org: ["hyundai", "admin"].includes(role) ? "hyundai" : "vendor", isAdmin: role === "admin" });
+      const container = { innerHTML: "", querySelector: () => null };
+      await context.loadDetail(container, plan.id);
+      const allowed = status === "draft" ? role !== "vendor"
+        : ["pending", "approving"].includes(status) ? ["hyundai", "admin"].includes(role)
+          : ["approved", "rejected"].includes(status) && role === "admin";
+      assert.equal(container.innerHTML.includes('id="detailDeleteButton"'), allowed, `${role}: ${status}`);
+    }
+  }
+});
