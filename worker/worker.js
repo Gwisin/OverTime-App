@@ -440,12 +440,27 @@ async function handlePendingUsers(request, env, usersFile) {
 }
 
 async function handleApproveUser(request, env, approverEmail, usersFile) {
-  const { email, approve } = await readJson(request);
+  const { email, approve } = (await readJson(request)) || {};
+  if (typeof email !== "string" || !email.trim()) {
+    throw publicError(400, "대상 사용자가 없습니다.", "INVALID_EMAIL");
+  }
+  if (typeof approve !== "boolean") {
+    throw publicError(400, "승인 여부는 true 또는 false로 지정해주세요.", "INVALID_APPROVAL");
+  }
+  if (isAdminEmail(env, email)) {
+    throw publicError(403, "ADMIN 계정은 변경할 수 없습니다.", "ADMIN_ACCOUNT_PROTECTED");
+  }
   await updateJsonWithRetry(
     env,
     "users.json",
     (users) => {
-      if (!users[email]) throw new Error("사용자를 찾을 수 없습니다.");
+      if (!Object.hasOwn(users, email) || !users[email]) {
+        throw publicError(404, "사용자를 찾을 수 없습니다.", "USER_NOT_FOUND");
+      }
+      // 재시도에서도 현재 상태를 확인해 정지 해제나 기존 계정 변경에 악용되지 않도록 한다.
+      if (accountStatusOf(users[email]) !== "pending") {
+        throw publicError(409, "가입 승인 대기중인 사용자만 승인 또는 반려할 수 있습니다.", "INVALID_ACCOUNT_STATUS");
+      }
       users[email].status = approve ? "approved" : "rejected";
       users[email].approvedBy = approverEmail;
       users[email].approvedAt = new Date().toISOString();
