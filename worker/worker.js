@@ -874,6 +874,17 @@ async function handleListPlans(request, env, url, currentUser) {
   } else if (currentUser.org === "vendor" && !currentUser.isAdmin) {
     list = list.filter((p) => p.company === currentUser.company);
   }
+  // 이전 목록에는 반려 시각이 없으므로 필요한 draft만 읽어 응답을 보완한다.
+  // 저장 데이터는 변경하지 않고, GitHub 상세 조회는 한 번에 최대 5개로 제한한다.
+  const legacyDrafts = list.filter((p) => p.status === "draft" && !Object.hasOwn(p, "rejectedAt") && isSafePlanId(p.id));
+  const rejectionTimes = new Map();
+  for (let i = 0; i < legacyDrafts.length; i += 5) {
+    await Promise.all(legacyDrafts.slice(i, i + 5).map(async (p) => {
+      const file = await ghGetJson(env, `data/plans/${p.id}.json`);
+      rejectionTimes.set(p.id, file ? file.json.rejectedAt || null : null);
+    }));
+  }
+  list = list.map((p) => rejectionTimes.has(p.id) ? { ...p, rejectedAt: rejectionTimes.get(p.id) } : p);
   list.sort((a, b) => (a.workDate < b.workDate ? 1 : -1));
   return json({ plans: list }, 200, env);
 }
@@ -995,6 +1006,7 @@ async function handleSavePlan(request, env, currentUser) {
         workType: plan.workType,
         company: plan.company,
         status: plan.status,
+        rejectedAt: plan.rejectedAt || null,
         vendorManagerName: plan.vendorManagerName || "",
         hyundaiManagerName: plan.hyundaiManagerName || "",
         writerName: plan.writerName || "",
@@ -1210,6 +1222,7 @@ async function updatePlanStatus(env, id, status, mutatorFn, currentUser, action,
       const idx = list.findIndex((p) => p.id === id);
       if (idx >= 0) {
         list[idx].status = status;
+        list[idx].rejectedAt = plan.rejectedAt || null;
         list[idx].updatedAt = plan.updatedAt;
         list[idx].hyundaiManagerName = plan.hyundaiManagerName || "";
         list[idx].writerName = plan.writerName || "";

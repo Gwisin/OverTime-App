@@ -287,6 +287,72 @@ test("plan list GET does not backfill legacy summaries or write stored data", as
   });
 });
 
+test("list reads rejection time for legacy drafts without writes or exposing detail fields", async () => {
+  const rejectedAt = "2026-10-11T00:00:00.000Z";
+  const files = {
+    "data/index.json": [
+      { id: "legacy-rejected", company: "협력사", status: "draft" },
+      { id: "legacy-draft", company: "협력사", status: "draft" },
+      { id: "modern-draft", company: "협력사", status: "draft", rejectedAt: null },
+      { id: "other-draft", company: "다른협력사", status: "draft" },
+    ],
+    "data/plans/legacy-rejected.json": { status: "draft", rejectedAt, rejectReason: "보완", hazards: "private" },
+    "data/plans/legacy-draft.json": { status: "draft" },
+  };
+  await withMockFetch({ files }, async (calls) => {
+    const response = await request("/api/plans");
+    assert.equal(response.status, 200);
+    const { plans } = await response.json();
+    const rejected = plans.find((p) => p.id === "legacy-rejected");
+    assert.equal(rejected.status, "draft");
+    assert.equal(rejected.rejectedAt, rejectedAt);
+    assert.equal(rejected.rejectReason, undefined);
+    assert.equal(rejected.hazards, undefined);
+    assert.equal(plans.find((p) => p.id === "legacy-draft").rejectedAt, null);
+    const detailGets = calls.filter(({ url }) => url.pathname.includes("/data/plans/"));
+    assert.equal(detailGets.length, 2);
+    assert.equal(calls.some(({ method }) => method !== "GET"), false);
+    assert.equal(Object.hasOwn(files["data/index.json"][0], "rejectedAt"), false);
+  });
+});
+
+test("reject, edit, and resubmit keep draft workflow and synchronize list rejection metadata", async () => {
+  const files = {
+    "data/plans/rejection-cycle.json": { id: "rejection-cycle", status: "pending", company: "협력사", workDate: "2026-10-11", workType: "점심", vendorManagerName: "관리자", writerEmail: "vendor@example.com" },
+    "data/index.json": [{ id: "rejection-cycle", status: "pending", company: "협력사" }],
+  };
+  function syncWrites(calls) {
+    for (const call of calls) {
+      if (call.method !== "PUT") continue;
+      const path = decodeURIComponent(call.url.pathname.split("/contents/")[1]);
+      files[path] = JSON.parse(Buffer.from(JSON.parse(call.body).content, "base64").toString());
+    }
+  }
+  await withMockFetch({ email: "hyundai@example.com", files }, async (calls) => {
+    assert.equal((await request("/api/plans/rejection-cycle/reject", { method: "POST", body: { reason: "보완 필요", stage: "execution" } })).status, 200);
+    syncWrites(calls);
+  });
+  const rejectedAt = files["data/plans/rejection-cycle.json"].rejectedAt;
+  assert.ok(rejectedAt);
+  assert.equal(files["data/index.json"][0].status, "draft");
+  assert.equal(files["data/index.json"][0].rejectedAt, rejectedAt);
+  await withMockFetch({ files }, async (calls) => {
+    assert.equal((await request("/api/plans", { method: "POST", body: { id: "rejection-cycle", company: "협력사", workDate: "2026-10-11", workType: "점심", vendorManagerName: "관리자", workLocation: "보완 완료" } })).status, 200);
+    syncWrites(calls);
+  });
+  assert.equal(files["data/plans/rejection-cycle.json"].status, "draft");
+  assert.equal(files["data/plans/rejection-cycle.json"].rejectReason, "보완 필요");
+  assert.equal(files["data/index.json"][0].rejectedAt, rejectedAt);
+  await withMockFetch({ files }, async (calls) => {
+    assert.equal((await request("/api/plans/rejection-cycle/submit", { method: "POST" })).status, 200);
+    syncWrites(calls);
+  });
+  assert.equal(files["data/plans/rejection-cycle.json"].status, "pending");
+  assert.equal(files["data/plans/rejection-cycle.json"].rejectedAt, undefined);
+  assert.equal(files["data/index.json"][0].status, "pending");
+  assert.equal(files["data/index.json"][0].rejectedAt, null);
+});
+
 test("Hyundai and ADMIN can open every company plan detail", async () => {
   const files = { "data/plans/other-plan.json": { id: "other-plan", company: "다른협력사", status: "approved" } };
   for (const email of ["hyundai@example.com", "admin@example.com"]) {

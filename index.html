@@ -671,8 +671,9 @@ function sortPlansForList(plans) {
 }
 function planCardHtml(p) {
   const badgeLabel = PLAN_BADGE_LABEL;
-  const statusClass = planStatusClass(p.status);
-  const statusLabel = badgeLabel[p.status] || p.status || "-";
+  const displayStatus = p.status === "draft" && p.rejectedAt ? "rejected" : p.status;
+  const statusClass = planStatusClass(displayStatus);
+  const statusLabel = badgeLabel[displayStatus] || displayStatus || "-";
   const vendorManagerName = cleanName(p.vendorManagerName) || "-";
   const hyundaiManagerName = cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중";
   const executionReviewSummary = p.executionReviewerName ? `검토 ${p.executionReviewerName}` : "검토중";
@@ -866,8 +867,12 @@ async function loadFormContent(container, planId) {
     if (e.target.value === "__manual__") manualInput.focus();
   });
 
-  container.querySelector("#formSaveButton")?.addEventListener("click", () => savePlanForm(planId || "", false));
-  container.querySelector("#formSubmitButton")?.addEventListener("click", () => savePlanForm(planId || "", true));
+  for (const [id, submitAfter] of [["formSaveButton", false], ["formSubmitButton", true]]) {
+    const button = container.querySelector("#" + id);
+    // Safari에서 버튼을 눌러도 입력 포커스가 유지될 수 있으므로 먼저 입력을 마친다.
+    button?.addEventListener("pointerdown", finishPlanFormInput);
+    button?.addEventListener("click", () => savePlanForm(planId || "", submitAfter));
+  }
 
   // 작업일자 표시: 2026.09.29(화)
   const dateInput = document.getElementById("f_workDate");
@@ -984,26 +989,45 @@ async function savePlanForm(planId, submitAfter) {
   try { return await savePlanFormContent(planId, submitAfter); }
   finally { recordDuration("overtime:savePlanForm", start); }
 }
+function finishPlanFormInput() {
+  const active = document.activeElement;
+  if (active?.matches("input, textarea, select")) active.blur();
+}
 async function savePlanFormContent(planId, submitAfter) {
   const errEl = document.getElementById("formError");
-  const body = collectFormData();
-  if (!body.workDate || !body.company || !body.workType) {
-    errEl.textContent = "작업일자, 업체명, 작업구분은 필수입니다.";
-    return;
-  }
-  if (submitAfter && !body.vendorManagerName) {
-    errEl.textContent = "협력업체 상주관리자를 선택하거나 직접 입력해주세요.";
-    return;
-  }
-  if (planId) body.id = planId;
+  const saveButton = document.getElementById("formSaveButton");
+  const submitButton = document.getElementById("formSubmitButton");
+  if (saveButton.disabled || submitButton.disabled) return;
+  saveButton.disabled = submitButton.disabled = true;
+  errEl.textContent = "";
+  const actionButton = submitAfter ? submitButton : saveButton;
+  const originalLabel = actionButton.textContent;
+  actionButton.textContent = "저장 중…";
   try {
+    finishPlanFormInput();
+    // blur에 따른 입력 확정 이벤트가 처리된 뒤 최신 값을 읽는다(키보드 실행 포함).
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const body = collectFormData();
+    if (!body.workDate || !body.company || !body.workType) {
+      errEl.textContent = "작업일자, 업체명, 작업구분은 필수입니다.";
+      return;
+    }
+    if (submitAfter && !body.vendorManagerName) {
+      errEl.textContent = "협력업체 상주관리자를 선택하거나 직접 입력해주세요.";
+      return;
+    }
+    if (planId) body.id = planId;
     const res = await api("/api/plans", { method: "POST", body });
     if (submitAfter) {
+      actionButton.textContent = "승인요청 중…";
       await api(`/api/plans/${encodeURIComponent(res.id)}/submit`, { method: "POST" });
     }
     go("detail", res.id, { replace: true });
   } catch (e) {
     errEl.textContent = e.message;
+  } finally {
+    saveButton.disabled = submitButton.disabled = false;
+    actionButton.textContent = originalLabel;
   }
 }
 

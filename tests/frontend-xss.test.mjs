@@ -77,6 +77,87 @@ test("home plan cards use review and approval wording", () => {
   assert.doesNotMatch(approvedCard, /수행팀 검토자|안전팀 승인자/);
 });
 
+test("list badges distinguish rejected drafts without changing workflow status", () => {
+  const context = makeContext();
+  const plan = { id: "plan-1", status: "draft", rejectedAt: "2026-10-11T00:00:00Z" };
+  assert.match(context.planCardHtml(plan), /badge rejected">반려/);
+  assert.equal(plan.status, "draft");
+  assert.match(context.planCardHtml({ ...plan, rejectedAt: null }), /badge draft">작성중/);
+  assert.match(context.planCardHtml({ ...plan, status: "pending" }), /badge pending">검토중/);
+});
+
+function formSaveContext() {
+  const elements = {
+    formError: { textContent: "이전 오류" },
+    formSaveButton: { textContent: "저장", disabled: false },
+    formSubmitButton: { textContent: "승인요청", disabled: false },
+  };
+  const document = { activeElement: null, getElementById: (id) => elements[id] };
+  const context = makeContext(undefined, { document });
+  let body = { workDate: "2026-10-11", company: "협력사", workType: "점심", vendorManagerName: "관리자", workLocation: "수정 전" };
+  context.collectFormData = () => ({ ...body });
+  const navigations = [];
+  context.go = (...args) => navigations.push(args);
+  return { context, elements, document, body, navigations };
+}
+
+test("form submission commits focused input, shows progress, and blocks duplicate actions", async () => {
+  const { context, elements, document, body, navigations } = formSaveContext();
+  const requests = [], pending = [];
+  context.api = (path, options) => {
+    requests.push({ path, options });
+    return new Promise((resolve) => pending.push(resolve));
+  };
+  document.activeElement = {
+    matches: () => true,
+    blur() {
+      document.activeElement = null;
+      setTimeout(() => { body.workLocation = "입력 확정된 내용"; }, 0);
+    },
+  };
+  const operation = context.savePlanForm("plan-1", true);
+  assert.equal(document.activeElement, null);
+  assert.equal(elements.formError.textContent, "");
+  assert.equal(elements.formSubmitButton.textContent, "저장 중…");
+  assert.equal(elements.formSaveButton.disabled, true);
+  assert.equal(elements.formSubmitButton.disabled, true);
+  await context.savePlanForm("plan-1", true);
+  await context.savePlanForm("plan-1", false);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.body.workLocation, "입력 확정된 내용");
+  assert.equal(requests[0].options.body.id, "plan-1");
+  pending.shift()({ id: "plan-1" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(elements.formSubmitButton.textContent, "승인요청 중…");
+  assert.equal(requests[1].path, "/api/plans/plan-1/submit");
+  pending.shift()({ ok: true });
+  await operation;
+  assert.equal(navigations.length, 1);
+  assert.equal(elements.formSubmitButton.textContent, "승인요청");
+  assert.equal(elements.formSaveButton.disabled, false);
+  assert.equal(elements.formSubmitButton.disabled, false);
+});
+
+test("validation and API failures release form buttons and permit retry", async () => {
+  const { context, elements, body } = formSaveContext();
+  let attempts = 0;
+  context.api = async () => { attempts++; throw new Error("저장 실패"); };
+  body.vendorManagerName = "";
+  await context.savePlanForm("plan-1", true);
+  assert.equal(attempts, 0);
+  assert.match(elements.formError.textContent, /상주관리자/);
+  assert.equal(elements.formSubmitButton.disabled, false);
+  body.vendorManagerName = "관리자";
+  await context.savePlanForm("plan-1", true);
+  assert.equal(attempts, 1);
+  assert.equal(elements.formError.textContent, "저장 실패");
+  assert.equal(elements.formSaveButton.disabled, false);
+  assert.equal(elements.formSubmitButton.textContent, "승인요청");
+  await context.savePlanForm("plan-1", true);
+  assert.equal(attempts, 2);
+});
+
 test("company filter options escape values and labels", () => {
   const context = makeContext();
   context.__setStateUser({ org: "vendor", isAdmin: false });
