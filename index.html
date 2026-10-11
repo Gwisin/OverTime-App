@@ -825,7 +825,7 @@ async function loadFormContent(container, planId) {
       <label>작업장소/내용</label>
       <textarea id="f_workLocation">${esc(plan.workLocation || "")}</textarea>
       <label>작업 인원/장비</label>
-      <textarea id="f_workforceEquipment" rows="2" placeholder="8명(관리자 4, 유도원 3, 06W 1대)&#10;OOO 소장, OOO 과장, OOO 대리, OOO 사원">${esc(plan.workforceEquipment || "")}</textarea>
+      <textarea id="f_workforceEquipment" rows="3" placeholder="8명(관리자 4, 유도원 3, 06W 1대)&#10;OOO 소장, OOO 과장, OOO 대리, OOO 사원&#10;(관리자 성명은 모두 입력 하시기 바랍니다.)">${esc(plan.workforceEquipment || "")}</textarea>
       <label>위험요인</label>
       <textarea id="f_hazards">${esc(plan.hazards || "")}</textarea>
       <label>저감대책</label>
