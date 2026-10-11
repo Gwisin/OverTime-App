@@ -47,6 +47,8 @@ npm --prefix worker test
 
 ## ADMIN vendor test mode
 
+Approved vendors can use **조회 범위 → 전체 업체 조회** (or a company filter) to browse other companies' plans and open reference details. These responses include work content, manager names, and approval status, but omit emails, phone numbers, signature paths, rejection comments, and internal fields. Reference detail responses add `readOnly: true`; the frontend shows a reference notice and hides PDF output. Signature API access and all write permissions retain their existing restrictions. Same-company, author, Hyundai, and ADMIN full detail responses remain unchanged. No stored data is rewritten. Deploy both `index.html` and `worker/worker.js` for this behavior.
+
 After Google login, ADMIN accounts can use **마이페이지 → 업체 사용자로 전환**. The frontend sends `X-OverTime-Test-Mode: vendor`; the Worker verifies the live approved account and `ADMIN_EMAILS` on each request, then applies vendor permissions for the fixed company `[테스트] 협력업체`. No user record, signature, or Google identity is replaced. Test plans use the normal production data store and the real ADMIN email as their author. Existing vendor rules apply, including read-only all-company lists and author access to their own plans.
 
 The banner provides **ADMIN으로 돌아가기**. Reloading or logging out also clears the mode. Deploy both the frontend and Worker; the frontend refuses to enter test mode if the Worker does not explicitly confirm it. No additional secrets or environment settings are required.

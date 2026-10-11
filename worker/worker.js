@@ -885,21 +885,56 @@ async function handleListPlans(request, env, url, currentUser) {
     }));
   }
   list = list.map((p) => rejectionTimes.has(p.id) ? { ...p, rejectedAt: rejectionTimes.get(p.id) } : p);
+  list = list.map((p) => canReadFullPlan(currentUser, p) ? p : referencePlan(p));
   list.sort((a, b) => (a.workDate < b.workDate ? 1 : -1));
   return json({ plans: list }, 200, env);
 }
 
-function assertCanReadPlanDetail(currentUser, plan) {
+function canReadFullPlan(currentUser, plan) {
   const isWriter = plan.writerEmail && plan.writerEmail === currentUser.email;
-  if (currentUser.org !== "hyundai" && !currentUser.isAdmin && plan.company !== currentUser.company && !isWriter) {
-    throw publicError(403, "다른 업체의 작업계획서 상세는 조회할 수 없습니다.", "PLAN_DETAIL_FORBIDDEN");
+  return currentUser.org === "hyundai" || currentUser.isAdmin || plan.company === currentUser.company || Boolean(isWriter);
+}
+
+// 다른 업체에는 참고용 필드만 반환한다. 이메일, 연락처, 서명 및 향후 추가되는
+// 내부 필드는 공개하지 않으며 원본 저장 데이터는 변경하지 않는다.
+function referencePlan(plan) {
+  const fields = [
+    "id", "company", "status", "workDate", "workType", "workTimeStart", "workTimeEnd",
+    "workLocation", "workforceEquipment", "hazards", "mitigations",
+    "writerName", "vendorManagerName", "hyundaiManagerName", "submittedAt", "rejectedAt",
+    "approverName", "executionReviewerName", "safetyApproverName",
+  ];
+  const result = {};
+  for (const key of fields) {
+    if (Object.hasOwn(plan, key)) result[key] = plan[key];
+  }
+  for (const [key, name, date] of [
+    ["executionReview", "reviewerName", "reviewedAt"],
+    ["safetyApproval", "approverName", "approvedAt"],
+    ["approval", "approverName", "approvedAt"],
+  ]) {
+    if (plan[key]) {
+      result[key] = {};
+      for (const field of [name, date]) {
+        if (Object.hasOwn(plan[key], field)) result[key][field] = plan[key][field];
+      }
+    }
+  }
+  return result;
+}
+
+function assertCanReadPlanSignatures(currentUser, plan) {
+  if (!canReadFullPlan(currentUser, plan)) {
+    throw publicError(403, "다른 업체의 작업계획서 서명은 조회할 수 없습니다.", "PLAN_DETAIL_FORBIDDEN");
   }
 }
 
 async function handleGetPlan(request, env, id, currentUser) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
-  assertCanReadPlanDetail(currentUser, file.json);
+  if (!canReadFullPlan(currentUser, file.json)) {
+    return json({ plan: referencePlan(file.json), readOnly: true }, 200, env);
+  }
   return json({ plan: file.json }, 200, env);
 }
 
@@ -913,7 +948,7 @@ async function handleGetPlanSignatures(env, id, currentUser, usersFile) {
   const file = await ghGetJson(env, `data/plans/${id}.json`);
   if (!file) return json({ error: "작업계획서를 찾을 수 없습니다." }, 404, env);
   const plan = file.json;
-  assertCanReadPlanDetail(currentUser, plan);
+  assertCanReadPlanSignatures(currentUser, plan);
   const vendorPath = usersFile && usersFile.json[plan.writerEmail] && usersFile.json[plan.writerEmail].signatureUrl;
   const executionPath = plan.executionReview && plan.executionReview.signatureUrl;
   const safetyApproval = plan.safetyApproval || (plan.status === "approved" ? plan.approval : null);

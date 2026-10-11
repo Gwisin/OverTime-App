@@ -248,23 +248,56 @@ test("protected APIs reject unauthenticated requests with 401", async () => {
   });
 });
 
-test("vendors can browse all plan summaries but only open their own company details", async () => {
+test("vendors can browse other company details without private fields or stored-data changes", async () => {
+  const otherPlan = {
+    id: "other-plan", company: "다른협력사", status: "approved", workDate: "2026-10-05",
+    workLocation: "작업장소", workforceEquipment: "작업인원과 장비", hazards: "위험요인", mitigations: "저감대책",
+    writerName: "작성자", vendorManagerName: "관리자", writerEmail: "other@example.com",
+    vendorManagerEmail: "other@example.com", hyundaiManagerEmail: "hyundai@example.com",
+    vendorManagerPhone: "010-0000-0000", rejectedBy: "hyundai@example.com", rejectReason: "내부 검토 의견",
+    executionReview: { reviewerName: "검토자", reviewedAt: "2026-10-05", reviewerEmail: "hyundai@example.com", signatureUrl: "signatures/execution.png" },
+    safetyApproval: { approverName: "승인자", approvedAt: "2026-10-05", approverEmail: "hyundai@example.com", signatureUrl: "signatures/safety.png" },
+    approval: { approverName: "이전 승인자", approvedAt: "2026-10-04", approverEmail: "hyundai@example.com", signatureUrl: "signatures/legacy.png" },
+    futurePrivateField: "private",
+  };
+  const expected = {
+    id: otherPlan.id, company: otherPlan.company, status: otherPlan.status, workDate: otherPlan.workDate,
+    workLocation: otherPlan.workLocation, workforceEquipment: otherPlan.workforceEquipment,
+    hazards: otherPlan.hazards, mitigations: otherPlan.mitigations,
+    writerName: otherPlan.writerName, vendorManagerName: otherPlan.vendorManagerName,
+    executionReview: { reviewerName: "검토자", reviewedAt: "2026-10-05" },
+    safetyApproval: { approverName: "승인자", approvedAt: "2026-10-05" },
+    approval: { approverName: "이전 승인자", approvedAt: "2026-10-04" },
+  };
   const files = {
     "data/index.json": [
       { id: "own-plan", company: "협력사", status: "draft", workDate: "2026-10-06" },
-      { id: "other-plan", company: "다른협력사", status: "approved", workDate: "2026-10-05" },
+      otherPlan,
     ],
     "data/plans/own-plan.json": { id: "own-plan", company: "협력사", status: "draft" },
-    "data/plans/other-plan.json": { id: "other-plan", company: "다른협력사", status: "approved", hazards: "private" },
+    "data/plans/other-plan.json": otherPlan,
   };
-  await withMockFetch({ files }, async () => {
+  await withMockFetch({ files }, async (calls) => {
     const list = await request("/api/plans?scope=all");
     assert.equal(list.status, 200);
-    assert.deepEqual((await list.json()).plans.map(({ id }) => id), ["own-plan", "other-plan"]);
-    assert.equal((await request("/api/plans/own-plan")).status, 200);
-    const forbidden = await request("/api/plans/other-plan");
-    assert.equal(forbidden.status, 403);
-    assert.equal((await forbidden.json()).code, "PLAN_DETAIL_FORBIDDEN");
+    const summaries = (await list.json()).plans;
+    assert.deepEqual(summaries.map(({ id }) => id), ["own-plan", "other-plan"]);
+    assert.deepEqual(summaries[1], expected);
+    assert.deepEqual(await (await request("/api/plans/own-plan")).json(), { plan: files["data/plans/own-plan.json"] });
+    const detail = await request("/api/plans/other-plan");
+    assert.equal(detail.status, 200);
+    assert.deepEqual(await detail.json(), { plan: expected, readOnly: true });
+    assert.equal(calls.some(({ method }) => method === "PUT" || method === "DELETE"), false);
+  });
+  for (const email of ["other@example.com", "hyundai@example.com", "admin@example.com"]) {
+    await withMockFetch({ email, files }, async () => {
+      assert.deepEqual(await (await request("/api/plans/other-plan")).json(), { plan: otherPlan });
+    });
+  }
+  await withMockFetch({ files: { "data/plans/other-plan.json": { ...otherPlan, writerEmail: "vendor@example.com" } } }, async () => {
+    const { plan, readOnly } = await (await request("/api/plans/other-plan")).json();
+    assert.equal(plan.writerEmail, "vendor@example.com");
+    assert.equal(readOnly, undefined);
   });
 });
 
@@ -362,7 +395,7 @@ test("Hyundai and ADMIN can open every company plan detail", async () => {
   }
 });
 
-test("plan signature lookup follows plan detail permissions", async () => {
+test("other-company reference access does not allow signature lookup", async () => {
   const plan = {
     id: "signed-plan",
     company: "다른협력사",
@@ -642,14 +675,22 @@ test("ADMIN name changes update every email-linked plan role and its list summar
   });
 });
 
-test("vendor cannot submit another company's plan or approve and reject plans", async () => {
+test("reference access does not permit changing another company's plan", async () => {
   const files = {
     "data/plans/other-plan.json": { id: "other-plan", company: "다른협력사", status: "draft", writerEmail: "other@example.com" },
   };
-  await withMockFetch({ files }, async () => {
+  await withMockFetch({ files }, async (calls) => {
+    assert.equal((await request("/api/plans/other-plan")).status, 200);
+    const save = await request("/api/plans", { method: "POST", body: {
+      id: "other-plan", company: "협력사", workDate: "2026-10-06", workType: "야간",
+    } });
+    assert.equal(save.status, 403); // 자기 회사명으로 덮어쓰기를 시도해도 원본 소속을 검사한다.
+    assert.equal((await request("/api/plans/other-plan", { method: "DELETE" })).status, 403);
     assert.equal((await request("/api/plans/other-plan/submit", { method: "POST" })).status, 403);
     assert.equal((await request("/api/plans/other-plan/approve", { method: "POST", body: {} })).status, 403);
+    assert.equal((await request("/api/plans/other-plan/execution-review", { method: "POST", body: {} })).status, 403);
     assert.equal((await request("/api/plans/other-plan/reject", { method: "POST", body: { reason: "reason" } })).status, 403);
+    assert.equal(calls.some(({ method }) => method === "PUT" || method === "DELETE"), false);
   });
 });
 
@@ -1075,7 +1116,9 @@ test("ADMIN vendor test mode enforces vendor scope and denies management and app
   await withMockFetch({ email: "admin@example.com", files }, async (calls) => {
     const list = await request("/api/plans", { testMode: "vendor" });
     assert.deepEqual((await list.json()).plans.map(p => p.id), ["test-plan"]);
-    assert.equal((await request("/api/plans/other-plan", { testMode: "vendor" })).status, 403);
+    const detail = await request("/api/plans/other-plan", { testMode: "vendor" });
+    assert.equal(detail.status, 200);
+    assert.equal((await detail.json()).readOnly, true);
     for (const path of ["/api/admin/users", "/api/users/pending"]) {
       assert.equal((await request(path, { testMode: "vendor" })).status, 403);
     }

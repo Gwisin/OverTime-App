@@ -108,6 +108,21 @@ test("detail badges match list badges while rejected drafts remain editable and 
   assert.match(container.innerHTML, /badge pending">검토중/);
 });
 
+test("other-company reference details show work content without management or PDF actions", async () => {
+  for (const status of ["draft", "pending", "approving", "approved", "rejected"]) {
+    const plan = { id: "other-plan", company: "다른협력사", status, workLocation: attack, workforceEquipment: "인원/장비", hazards: "위험요인", mitigations: "저감대책" };
+    const context = makeContext(async () => ({ ok: true, json: async () => ({ plan, readOnly: true }) }));
+    context.__setStateUser({ email: "vendor@example.com", company: "협력사", org: "vendor", isAdmin: false });
+    const container = { innerHTML: "", querySelector: () => null };
+    await context.loadDetail(container, plan.id);
+    assert.match(container.innerHTML, /작성 참고용/);
+    assert.match(container.innerHTML, /인원\/장비|위험요인|저감대책/);
+    assert.match(container.innerHTML, /&lt;img/);
+    assert.doesNotMatch(container.innerHTML, /<img/i);
+    assert.doesNotMatch(container.innerHTML, /id="detail(?:Edit|Submit|Delete|ExecutionReview|SafetyApprove|ExecutionReject|SafetyReject|Manager|Pdf)Button"/);
+  }
+});
+
 function formSaveContext() {
   const elements = {
     formError: { textContent: "이전 오류" },
