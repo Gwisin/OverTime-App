@@ -1072,6 +1072,7 @@ async function loadDetailContent(container, planId) {
     const data = await api("/api/plans/" + encodeURIComponent(planId));
     const plan = data.plan;
     state.currentPlan = plan;
+    const readOnly = data.readOnly === true;
     const badgeLabel = PLAN_BADGE_LABEL;
     const displayStatus = planDisplayStatus(plan);
     const statusClass = planStatusClass(displayStatus);
@@ -1080,7 +1081,7 @@ async function loadDetailContent(container, planId) {
     const canExecutionReview = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.executionReview;
     const canSafetyApprove = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.safetyApproval;
     const canChangeHyundaiManager = state.user.org === "hyundai" && ["pending", "approving", "approved"].includes(plan.status);
-    const canManage = state.user.org === "hyundai" || plan.company === state.user.company; // 협력업체는 같은 업체 건만
+    const canManage = !readOnly && (state.user.org === "hyundai" || plan.company === state.user.company); // 협력업체는 같은 업체 건만
     const canEdit = plan.status !== "approved" && canManage;
     const canSubmit = plan.status === "draft" && canManage;
     const canDelete =
@@ -1093,6 +1094,7 @@ async function loadDetailContent(container, planId) {
     }
 
     container.innerHTML = `
+      ${readOnly ? `<div class="card muted">다른 업체의 작업계획서입니다. 작성 참고용으로 조회할 수 있으며, 이메일과 서명은 공개되지 않습니다.</div>` : ""}
       <div class="card">
         <div class="top" style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
           <div style="min-width:0;">
@@ -1147,9 +1149,9 @@ async function loadDetailContent(container, planId) {
           <div><div class="muted">현대건설</div><div>${esc(plan.hyundaiManagerName || "-")}</div></div>
         </div>
       </div>
-      <div class="card">
+      ${!readOnly ? `<div class="card">
         <button id="detailPdfButton" class="primary block">작업계획서 PDF 출력</button>
-      </div>`;
+      </div>` : ""}`;
     container.querySelector("#detailEditButton")?.addEventListener("click", () => go("form", plan.id));
     container.querySelector("#detailSubmitButton")?.addEventListener("click", () => submitPlanFromDetail(plan.id));
     container.querySelector("#detailExecutionReviewButton")?.addEventListener("click", () => completeApprovalStep(plan.id, "execution"));
