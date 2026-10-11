@@ -341,8 +341,8 @@ test("edit form escapes stored plan and manager values", async () => {
   assert.doesNotMatch(container.innerHTML, /onclick="savePlanForm/i);
   assert.match(container.innerHTML, /&lt;\/textarea&gt;&lt;img/);
   assert.match(container.innerHTML, />직접입력<\/option>/);
-  assert.match(container.innerHTML, /<textarea id="f_workforceEquipment" rows="2"/);
-  assert.match(container.innerHTML, /8명\(관리자 4, 유도원 3, 06W 1대\).*OOO 소장, OOO 과장, OOO 대리, OOO 사원/);
+  assert.match(container.innerHTML, /<textarea id="f_workforceEquipment" rows="3"/);
+  assert.match(container.innerHTML, /8명\(관리자 4, 유도원 3, 06W 1대\)&#10;OOO 소장, OOO 과장, OOO 대리, OOO 사원&#10;\(관리자 성명은 모두 입력 하시기 바랍니다\.\)/);
 });
 
 test("download template escapes resident manager and approval identities", () => {
