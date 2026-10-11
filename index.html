@@ -126,6 +126,7 @@
   .approval-step .step-status { margin-left: auto; text-align: right; white-space: nowrap; color: var(--sub); }
   .approval-step:last-child { border-bottom: none; }
 
+  .detail-company { margin: 14px 0 0; color: var(--text); font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
   .detail-field-title { display: flex; align-items: center; gap: 7px; margin: 18px 0 7px; color: var(--text); font-size: 15px; font-weight: 700; }
   .detail-field-title::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }
 
@@ -1103,35 +1104,7 @@ async function loadDetailContent(container, planId) {
           </div>
           <span class="badge ${statusClass}">${esc(statusLabel)}</span>
         </div>
-        <p class="muted">${esc(plan.company)}</p>
-        <div class="approval-step"><span class="step-label">요청</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
-        <div class="approval-step"><span class="step-label">수행팀</span><span class="step-name">${esc(plan.executionReview ? plan.executionReview.reviewerName : "")}</span><span class="step-status">${esc(plan.executionReview ? "검토완료(" + formatDoneTime(plan.executionReview.reviewedAt) + ")" : "검토중")}</span></div>
-        <div class="approval-step"><span class="step-label">안전팀</span><span class="step-name">${esc(plan.safetyApproval ? plan.safetyApproval.approverName : (plan.status === "approved" && plan.approval ? plan.approval.approverName : ""))}</span><span class="step-status">${esc(plan.safetyApproval ? "승인완료(" + formatDoneTime(plan.safetyApproval.approvedAt) + ")" : (plan.status === "approved" && plan.approval ? "승인완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "승인중"))}</span></div>
-        ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
-        ${canChangeHyundaiManager ? `
-          <label>현대건설 상주관리자</label>
-          <div class="manager-field">
-            <select id="approveManager">
-              <option value="">선택</option>
-              ${hyundaiManagers.map((m, i) => managerOptionHtml(m, i, plan.hyundaiManagerEmail, plan.hyundaiManagerName)).join("")}
-              <option value="__manual__" ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "selected" : ""}>직접입력</option>
-            </select>
-            <input id="approveManagerManual" class="manager-manual ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "" : "hidden"}" type="text" maxlength="100" value="${!plan.hyundaiManagerEmail ? esc(plan.hyundaiManagerName || "") : ""}" placeholder="현대건설 상주관리자 성명" />
-          </div>` : ""}
-        ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:12px;">
-          ${canExecutionReview ? `<button id="detailExecutionReviewButton" class="primary">수행팀 결재</button>` : ""}
-          ${canSafetyApprove ? `<button id="detailSafetyApproveButton" class="primary">안전팀 결재</button>` : ""}
-        </div>` : ""}
-        ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:8px;">
-          ${canExecutionReview ? `<button id="detailExecutionRejectButton" style="color:var(--danger);">수행팀 반려</button>` : ""}
-          ${canSafetyApprove ? `<button id="detailSafetyRejectButton" style="color:var(--danger);">안전팀 반려</button>` : ""}
-        </div>` : ""}
-        <div class="row" style="margin-top:8px;">
-          ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
-          ${canSubmit ? `<button id="detailSubmitButton" class="primary">승인요청</button>` : ""}
-          ${canChangeHyundaiManager ? `<button id="detailManagerButton">상주관리자 지정/변경</button>` : ""}
-        </div>
-        ${canDelete ? `<button id="detailDeleteButton" class="block" style="color:var(--danger);">삭제</button>` : ""}
+        <p class="detail-company">${esc(plan.company)}</p>
       </div>
       <div class="card">
         <h2>작업 내용</h2>
@@ -1149,6 +1122,38 @@ async function loadDetailContent(container, planId) {
           <div><div class="muted">현대건설</div><div>${esc(plan.hyundaiManagerName || "-")}</div></div>
         </div>
       </div>
+      <div class="card" aria-label="결재 결과">
+        <div class="approval-step"><span class="step-label">요청</span><span class="step-name">${esc(plan.writerName || "-")}</span><span class="step-status">${esc(plan.status === "draft" ? "임시저장" : "완료" + (plan.submittedAt ? "(" + formatDoneTime(plan.submittedAt) + ")" : ""))}</span></div>
+        <div class="approval-step"><span class="step-label">수행팀</span><span class="step-name">${esc(plan.executionReview ? plan.executionReview.reviewerName : "")}</span><span class="step-status">${esc(plan.executionReview ? "검토완료(" + formatDoneTime(plan.executionReview.reviewedAt) + ")" : "검토중")}</span></div>
+        <div class="approval-step"><span class="step-label">안전팀</span><span class="step-name">${esc(plan.safetyApproval ? plan.safetyApproval.approverName : (plan.status === "approved" && plan.approval ? plan.approval.approverName : ""))}</span><span class="step-status">${esc(plan.safetyApproval ? "승인완료(" + formatDoneTime(plan.safetyApproval.approvedAt) + ")" : (plan.status === "approved" && plan.approval ? "승인완료(" + formatDoneTime(plan.approval.approvedAt) + ")" : "승인중"))}</span></div>
+        ${plan.rejectReason ? `<p class="error-text">반려 사유: ${esc(plan.rejectReason)}</p>` : ""}
+      </div>
+      ${canChangeHyundaiManager || canExecutionReview || canSafetyApprove || canSubmit || canEdit || canDelete ? `<div class="card" aria-label="결재 및 관리">
+        ${canChangeHyundaiManager ? `
+          <label>현대건설 상주관리자</label>
+          <div class="manager-field">
+            <select id="approveManager">
+              <option value="">선택</option>
+              ${hyundaiManagers.map((m, i) => managerOptionHtml(m, i, plan.hyundaiManagerEmail, plan.hyundaiManagerName)).join("")}
+              <option value="__manual__" ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "selected" : ""}>직접입력</option>
+            </select>
+            <input id="approveManagerManual" class="manager-manual ${!plan.hyundaiManagerEmail && Boolean(cleanName(plan.hyundaiManagerName)) ? "" : "hidden"}" type="text" maxlength="100" value="${!plan.hyundaiManagerEmail ? esc(plan.hyundaiManagerName || "") : ""}" placeholder="현대건설 상주관리자 성명" />
+          </div>
+          <button id="detailManagerButton" class="block">상주관리자 지정/변경</button>` : ""}
+        ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:12px;">
+          ${canExecutionReview ? `<button id="detailExecutionReviewButton" class="primary">수행팀 결재</button>` : ""}
+          ${canSafetyApprove ? `<button id="detailSafetyApproveButton" class="primary">안전팀 결재</button>` : ""}
+        </div>` : ""}
+        ${canExecutionReview || canSafetyApprove ? `<div class="row" style="margin-top:8px;">
+          ${canExecutionReview ? `<button id="detailExecutionRejectButton" style="color:var(--danger);">수행팀 반려</button>` : ""}
+          ${canSafetyApprove ? `<button id="detailSafetyRejectButton" style="color:var(--danger);">안전팀 반려</button>` : ""}
+        </div>` : ""}
+        ${canSubmit ? `<button id="detailSubmitButton" class="primary block">승인요청</button>` : ""}
+        ${canEdit || canDelete ? `<div class="row" style="margin-top:16px;">
+          ${canEdit ? `<button id="detailEditButton">수정</button>` : ""}
+          ${canDelete ? `<button id="detailDeleteButton" style="color:var(--danger);">삭제</button>` : ""}
+        </div>` : ""}
+      </div>` : ""}
       ${!readOnly ? `<div class="card">
         <button id="detailPdfButton" class="primary block">작업계획서 PDF 출력</button>
       </div>` : ""}`;
