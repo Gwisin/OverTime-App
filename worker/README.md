@@ -23,9 +23,10 @@ Configure these values in Cloudflare rather than in source code:
 - `GITHUB_BRANCH`: data branch; defaults to `main`
 - `GOOGLE_CLIENT_ID`: Google OAuth client ID used by the frontend
 - `ALLOWED_ORIGIN`: required comma-separated list of deployed frontend origins; browser requests fail closed when omitted
+- `SESSION_SECRET`: a cryptographically random secret of at least 32 bytes, stored as a Cloudflare Worker secret; required for the new frontend login flow. Keep it stable across deployments. Rotation invalidates all existing app sessions. Never reuse `GITHUB_TOKEN` or commit the secret.
 - `ADMIN_EMAILS`: comma-separated administrator email addresses
 
-The production Worker only accepts Google ID tokens. It verifies RS256 signatures using Web Crypto and Google's rotating public keys from `https://www.googleapis.com/oauth2/v3/certs`. Only public keys are cached (following the response max-age); tokens and account status are not cached. The existing `GOOGLE_CLIENT_ID` configuration and email-keyed user records are retained. No new secrets, packages, build step, or data migration are needed. Remove any legacy `TEST_LOGIN_SECRET` setting from Cloudflare before deployment.
+The Worker accepts Google ID tokens and signed OverTime app sessions. Google ID tokens remain supported for existing API clients. It verifies RS256 signatures using Web Crypto and Google's rotating public keys from `https://www.googleapis.com/oauth2/v3/certs`. Only public keys are cached (following the response max-age); tokens and account status are not cached. The existing `GOOGLE_CLIENT_ID` configuration and email-keyed user records are retained. No new secrets, packages, build step, or data migration are needed. Remove any legacy `TEST_LOGIN_SECRET` setting from Cloudflare before deployment.
 
 ## Local checks
 
@@ -52,3 +53,41 @@ Approved vendors can use **조회 범위 → 전체 업체 조회** (or a compan
 After Google login, ADMIN accounts can use **마이페이지 → 업체 사용자로 전환**. The frontend sends `X-OverTime-Test-Mode: vendor`; the Worker verifies the live approved account and `ADMIN_EMAILS` on each request, then applies vendor permissions for the fixed company `[테스트] 협력업체`. No user record, signature, or Google identity is replaced. Test plans use the normal production data store and the real ADMIN email as their author. Existing vendor rules apply, including read-only all-company lists and author access to their own plans.
 
 The banner provides **ADMIN으로 돌아가기**. Reloading or logging out also clears the mode. Deploy both the frontend and Worker; the frontend refuses to enter test mode if the Worker does not explicitly confirm it. No additional secrets or environment settings are required.
+
+## Login persistence until midnight (Asia/Seoul)
+
+The frontend exchanges a verified Google ID token with `POST /api/auth` using
+`{ idToken, issueSession: true }`. The response retains the existing account-status
+contract and adds `sessionToken` and `sessionExpiresAt` (Unix milliseconds).
+Sessions are signed with HMAC-SHA256 using `SESSION_SECRET`, bound to
+`GOOGLE_CLIENT_ID`, and expire at the next 00:00 in Asia/Seoul (UTC+09:00).
+Restoration sends the session as `idToken` without `issueSession`; it does not
+renew or extend the session. Session tokens cannot be exchanged for new sessions.
+No expired Google token is accepted to issue a session.
+
+The browser stores the app session in first-party localStorage (`overtimeSession`)
+and uses the existing Authorization Bearer header, avoiding third-party cookies
+and silent Google sign-in. This retains the existing script-readable bearer-token
+storage model; protect the frontend against XSS. Same browser/profile/origin is
+required. Private browsing and clearing site data can remove the session.
+
+The frontend checks expiry on boot, API requests, a midnight timer, and browser
+focus/pageshow/visibility restoration. Background browsers cannot be forced to
+execute at midnight, but the server rejects the session from midnight onward and
+the UI clears it when resumed. Transient network/5xx failures preserve the stored
+session and offer retry. Logout clears local state and propagates to other tabs;
+this stateless design does not individually revoke copied tokens on the server.
+The existing live account-status and authorization checks remain in force on every
+protected request; suspension blocks access even before midnight. Session payloads
+do not contain stored roles, signature paths or contact data. No data migration or
+session database is required.
+
+Deployment order: configure `SESSION_SECRET`, deploy the Worker, then deploy
+`index.html`. Old frontends keep working with Google tokens; new frontends require
+the upgraded Worker and fail with a setup message if the secret is missing. Valid
+legacy stored Google tokens are exchanged once; expired ones require Google login.
+After midnight the app shows the Google login button and does not silently sign
+back in. Run the complete regression suite plus Safari/Chromium checks for refresh,
+closing/reopening, mobile background return, network recovery, logout and midnight.
+
+Detailed Korean deployment steps: [DEPLOY-LOGIN-KO.md](DEPLOY-LOGIN-KO.md).

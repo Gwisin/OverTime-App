@@ -111,3 +111,74 @@ test("expired key cache and rotated key IDs trigger a fresh lookup", async () =>
     } finally { Date.now = originalNow; }
   }
 });
+
+test("app sessions survive Google expiry, restore without renewal and expire exactly at KST midnight", async () => {
+  const worker = await freshWorker();
+  const originalNow = Date.now;
+  const originalSecret = env.SESSION_SECRET;
+  env.SESSION_SECRET = "test-only-session-secret-at-least-32-bytes";
+  let now = Date.parse("2026-10-21T00:00:00Z"); // 09:00 KST
+  Date.now = () => now;
+  const requestAuth = (body) => worker.fetch(new Request("https://worker.example/api/auth", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }), env);
+  const protectedRequest = (token) => worker.fetch(new Request("https://worker.example/api/users/pending", {
+    headers: { Authorization: `Bearer ${token}` },
+  }), env);
+  try {
+    await mocked(async (calls, setStatus) => {
+      const google = signedToken();
+      const response = await requestAuth({ idToken: google, issueSession: true });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      const { sessionToken, sessionExpiresAt } = await response.json();
+      assert.equal(sessionExpiresAt, Date.parse("2026-10-21T15:00:00Z"));
+      now += 2 * 3600000;
+      assert.equal((await auth(worker, google)).status, 401);
+      const restored = await auth(worker, sessionToken);
+      assert.equal(restored.status, 200);
+      assert.equal((await restored.json()).sessionToken, undefined);
+      assert.equal((await requestAuth({ idToken: sessionToken, issueSession: true })).status, 401);
+      // The identity is valid but vendor cannot use signup management.
+      assert.equal((await protectedRequest(sessionToken)).status, 403);
+      setStatus("suspended");
+      assert.equal((await (await auth(worker, sessionToken)).json()).status, "suspended");
+      assert.equal((await protectedRequest(sessionToken)).status, 403);
+      setStatus("approved");
+      now = sessionExpiresAt - 1;
+      assert.equal((await auth(worker, sessionToken)).status, 200);
+      now = sessionExpiresAt;
+      assert.equal((await auth(worker, sessionToken)).status, 401);
+      assert.equal((await protectedRequest(sessionToken)).status, 401);
+    });
+  } finally { Date.now = originalNow; env.SESSION_SECRET = originalSecret; }
+});
+
+test("app session tampering, wrong audience, wrong secret and missing setup fail closed", async () => {
+  const worker = await freshWorker();
+  const originalSecret = env.SESSION_SECRET;
+  const originalError = console.error;
+  console.error = () => {};
+  const exchange = () => worker.fetch(new Request("https://worker.example/api/auth", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken: signedToken(), issueSession: true }),
+  }), env);
+  try {
+    await mocked(async () => {
+      delete env.SESSION_SECRET;
+      assert.equal((await exchange()).status, 503);
+      env.SESSION_SECRET = "test-only-session-secret-at-least-32-bytes";
+      const { sessionToken } = await (await exchange()).json();
+      const parts = sessionToken.split(".");
+      const forged = { ...JSON.parse(Buffer.from(parts[1], "base64url")), email: "admin@example.com" };
+      assert.equal((await auth(worker, `${parts[0]}.${Buffer.from(JSON.stringify(forged)).toString("base64url")}.${parts[2]}`)).status, 401);
+      const originalClient = env.GOOGLE_CLIENT_ID;
+      env.GOOGLE_CLIENT_ID = "other-client";
+      try { assert.equal((await auth(worker, sessionToken)).status, 401); }
+      finally { env.GOOGLE_CLIENT_ID = originalClient; }
+      env.SESSION_SECRET = "another-test-only-secret-at-least-32-bytes";
+      assert.equal((await auth(worker, sessionToken)).status, 401);
+      assert.equal((await auth(worker, "ot1.bad.encoding.extra")).status, 401);
+    });
+  } finally { env.SESSION_SECRET = originalSecret; console.error = originalError; }
+});

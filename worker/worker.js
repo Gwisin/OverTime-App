@@ -360,11 +360,51 @@ async function verifyGoogleToken(env, idToken) {
   }
 }
 
+// App sessions expire at the next midnight in Asia/Seoul (UTC+09:00).
+const SESSION_PREFIX = "ot1";
+function midnightKst(seconds) {
+  return (Math.floor((seconds + 32400) / 86400) + 1) * 86400 - 32400;
+}
+async function sessionKey(env) {
+  if (typeof env.SESSION_SECRET !== "string" || new TextEncoder().encode(env.SESSION_SECRET).length < 32) {
+    throw publicError(503, "로그인 유지 설정이 준비되지 않았습니다. 관리자에게 문의해주세요.", "SESSION_NOT_CONFIGURED");
+  }
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(env.SESSION_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+}
+function base64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function issueSession(env, user) {
+  const key = await sessionKey(env);
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = midnightKst(iat);
+  const payload = base64url(new TextEncoder().encode(JSON.stringify({ email: user.email, name: user.name, aud: env.GOOGLE_CLIENT_ID, iat, exp })));
+  const message = SESSION_PREFIX + "." + payload;
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return { sessionToken: message + "." + base64url(new Uint8Array(signature)), sessionExpiresAt: exp * 1000 };
+}
+async function verifyIdentity(env, token) {
+  if (typeof token !== "string" || !token || token.length > 16384) return null;
+  if (!token.startsWith(SESSION_PREFIX + ".")) return verifyGoogleToken(env, token);
+  const key = await sessionKey(env);
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    if (!await crypto.subtle.verify("HMAC", key, jwtBytes(parts[2]), new TextEncoder().encode(parts[0] + "." + parts[1]))) return null;
+    const data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(jwtBytes(parts[1])));
+    const now = Math.floor(Date.now() / 1000);
+    if (!env.GOOGLE_CLIENT_ID || data.aud !== env.GOOGLE_CLIENT_ID || typeof data.email !== "string" || !data.email ||
+        !Number.isSafeInteger(data.iat) || !Number.isSafeInteger(data.exp) || data.iat > now ||
+        data.exp !== midnightKst(data.iat) || data.exp <= now) return null;
+    return { email: data.email, name: data.name };
+  } catch { return null; }
+}
+
 async function requireAuth(request, env) {
   const authHeader = request.headers.get("Authorization") || "";
   const token = authHeader.replace(/^Bearer /, "");
   if (!token) return null;
-  return await verifyGoogleToken(env, token);
+  return await verifyIdentity(env, token);
 }
 
 function safeIdPart(str) {
@@ -377,31 +417,38 @@ function safeEmailFile(email) {
 // ---------- 라우트 핸들러 ----------
 
 async function handleAuth(request, env) {
-  const { idToken } = await readJson(request);
-  const googleUser = await verifyGoogleToken(env, idToken);
+  const { idToken, issueSession: wantsSession } = await readJson(request);
+  // A saved app session can be restored but can never mint another session.
+  const googleUser = wantsSession ? await verifyGoogleToken(env, idToken) : await verifyIdentity(env, idToken);
   if (!googleUser) return json({ error: "로그인 정보를 확인할 수 없습니다." }, 401, env);
 
+  const session = wantsSession ? await issueSession(env, googleUser) : {};
+  const reply = (data, status = 200) => {
+    const response = json({ ...data, ...session }, status, env);
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  };
   const usersFile = await ghGetJson(env, "users.json");
   const users = usersFile ? usersFile.json : {};
   const record = users[googleUser.email];
   const accountStatus = accountStatusOf(record);
 
   if (accountStatus === "not_registered") {
-    return json({ status: "not_registered", email: googleUser.email, name: googleUser.name }, 200, env);
+    return reply({ status: "not_registered", email: googleUser.email, name: googleUser.name }, 200);
   }
   if (accountStatus === "pending") {
-    return json({ status: "pending", email: googleUser.email }, 200, env);
+    return reply({ status: "pending", email: googleUser.email }, 200);
   }
   if (accountStatus === "rejected") {
-    return json({ status: "rejected", email: googleUser.email }, 200, env);
+    return reply({ status: "rejected", email: googleUser.email }, 200);
   }
   if (accountStatus === "suspended") {
-    return json({ status: "suspended", email: googleUser.email }, 200, env);
+    return reply({ status: "suspended", email: googleUser.email }, 200);
   }
   if (accountStatus !== "approved") {
     return json({ error: "계정 상태를 확인할 수 없습니다. 관리자에게 문의해주세요.", status: "invalid" }, 403, env);
   }
-  return json(
+  return reply(
     {
       status: "approved",
       user: applyVendorTestMode(request, env, {
@@ -412,14 +459,13 @@ async function handleAuth(request, env) {
         isAdmin: isAdminEmail(env, googleUser.email),
       }),
     },
-    200,
-    env
+    200
   );
 }
 
 async function handleRegister(request, env) {
   const body = await readJson(request, 2_100_000);
-  const googleUser = await verifyGoogleToken(env, body.idToken);
+  const googleUser = await verifyIdentity(env, body.idToken);
   if (!googleUser) return json({ error: "로그인 정보를 확인할 수 없습니다." }, 401, env);
 
   const { imageBase64 } = body;

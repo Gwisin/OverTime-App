@@ -4,6 +4,13 @@ Notable application and Worker changes are recorded here. Worker versions descri
 
 ## [Unreleased]
 
+### 자정까지 로그인 유지
+
+- Google 로그인 후 발급한 앱 세션으로 한국 시간 자정까지 로그인 유지. 새로고침·브라우저 재실행 후 복원하며 만료 시각은 연장하지 않음.
+- 일시적인 통신·서버 오류에서는 세션을 유지하고 재시도 제공. 자정 타이머, 화면 복귀 및 API 요청에서 만료 처리.
+- 기존 Google 인증·계정 상태·권한·저장 데이터 유지. 서버의 `SESSION_SECRET` 설정과 Worker → 프론트엔드 순서 배포 필요. 운영 배포 미수행.
+
+
 ### Changed
 
 - Add an ADMIN-only vendor test mode using the existing Google identity; apply vendor permissions on every Worker request without changing the stored account.
