@@ -772,6 +772,53 @@ test("save accepts a manual vendor manager and ignores Hyundai manager fields be
   });
 });
 
+test("only ADMIN can edit approved plans while preserving approval records and signatures", async () => {
+  const plan = {
+    id: "approved-plan", company: "협력사", workDate: "2026-10-21", workType: "야간", status: "approved",
+    workLocation: "기존 내용", vendorManagerName: "협력업체 관리자", vendorManagerEmail: "vendor@example.com",
+    writerEmail: "vendor@example.com", writerName: "Vendor", createdAt: "2026-10-20T00:00:00.000Z",
+    updatedAt: "2026-10-20T01:00:00.000Z", submittedAt: "2026-10-20T00:30:00.000Z",
+    executionReview: { reviewerEmail: "hyundai@example.com", reviewerName: "검토자", signatureUrl: "signatures/execution.png", reviewedAt: "2026-10-20T00:40:00.000Z" },
+    safetyApproval: { approverEmail: "hyundai@example.com", approverName: "승인자", signatureUrl: "signatures/safety.png", approvedAt: "2026-10-20T01:00:00.000Z" },
+    approval: { approverEmail: "hyundai@example.com", approverName: "승인자", signatureUrl: "signatures/safety.png", approvedAt: "2026-10-20T01:00:00.000Z" },
+  };
+  for (const actor of [
+    { email: "admin@example.com", company: plan.company, expected: 200 },
+    { email: "hyundai@example.com", company: plan.company, expected: 400 },
+    { email: "vendor@example.com", company: plan.company, expected: 400 },
+    { email: "other@example.com", company: plan.company, expected: 403 },
+    { email: "admin@example.com", company: "[테스트] 협력업체", testMode: "vendor", expected: 400 },
+  ]) {
+    const original = { ...plan, company: actor.company };
+    const otherSummary = { id: "other-plan", company: "다른협력사", status: "pending" };
+    const files = { "data/plans/approved-plan.json": original, "data/index.json": [{ id: plan.id, status: plan.status }, otherSummary] };
+    await withMockFetch({ email: actor.email, files }, async (calls) => {
+      const response = await request("/api/plans", {
+        method: "POST", testMode: actor.testMode,
+        body: { ...original, workLocation: "ADMIN 수정 내용", status: "draft", approval: null, executionReview: null, safetyApproval: null, writerEmail: "forged@example.com", isAdmin: true },
+      });
+      assert.equal(response.status, actor.expected, actor.email);
+      const puts = calls.filter(({ method }) => method === "PUT");
+      if (actor.expected !== 200) {
+        assert.equal(puts.length, 0);
+        return;
+      }
+      assert.equal(puts.length, 2);
+      const decode = (call) => JSON.parse(Buffer.from(JSON.parse(call.body).content, "base64").toString());
+      const saved = decode(puts.find(({ url }) => decodeURIComponent(url.pathname).endsWith("/data/plans/approved-plan.json")));
+      assert.notEqual(saved.updatedAt, original.updatedAt);
+      assert.ok(Number.isFinite(Date.parse(saved.updatedAt)));
+      assert.deepEqual(saved, { ...original, workLocation: "ADMIN 수정 내용", updatedAt: saved.updatedAt });
+      const index = decode(puts.find(({ url }) => decodeURIComponent(url.pathname).endsWith("/data/index.json")));
+      assert.equal(index[0].status, "approved");
+      assert.equal(index[0].executionReviewerName, plan.executionReview.reviewerName);
+      assert.equal(index[0].safetyApproverName, plan.safetyApproval.approverName);
+      assert.equal(index[0].approverName, plan.approval.approverName);
+      assert.deepEqual(index[1], otherSummary);
+    });
+  }
+});
+
 test("save allowlist preserves omitted optional fields on existing plans", async () => {
   const files = {
     "data/index.json": [],

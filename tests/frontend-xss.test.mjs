@@ -108,6 +108,24 @@ test("detail badges match list badges while rejected drafts remain editable and 
   assert.match(container.innerHTML, /badge pending">검토중/);
 });
 
+test("approved plan detail exposes editing only to ADMIN without resubmission actions", async () => {
+  const plan = { id: "approved-plan", status: "approved", company: "협력사", writerEmail: "vendor@example.com" };
+  for (const user of [
+    { email: "admin@example.com", org: "hyundai", company: "현대건설(주)", isAdmin: true },
+    { email: "hyundai@example.com", org: "hyundai", company: "현대건설(주)", isAdmin: false },
+    { email: "vendor@example.com", org: "vendor", company: plan.company, isAdmin: false },
+    { email: "admin@example.com", org: "vendor", company: plan.company, isAdmin: false, vendorTestMode: true },
+  ]) {
+    const context = makeContext();
+    context.api = async (path) => path.startsWith("/api/managers") ? { managers: [] } : { plan };
+    context.__setStateUser(user);
+    const container = { innerHTML: "", querySelector: () => null };
+    await context.loadDetail(container, plan.id);
+    assert.equal(container.innerHTML.includes('id="detailEditButton"'), user.isAdmin);
+    assert.doesNotMatch(container.innerHTML, /id="detail(?:Submit|ExecutionReview|SafetyApprove)Button"/);
+  }
+});
+
 test("other-company reference details show work content without management or PDF actions", async () => {
   for (const status of ["draft", "pending", "approving", "approved", "rejected"]) {
     const plan = { id: "other-plan", company: "다른협력사", status, workLocation: attack, workforceEquipment: "인원/장비", hazards: "위험요인", mitigations: "저감대책" };

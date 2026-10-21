@@ -1106,7 +1106,7 @@ async function loadDetailContent(container, planId) {
     const canSafetyApprove = state.user.org === "hyundai" && isHyundaiApprovalState && !plan.safetyApproval;
     const canChangeHyundaiManager = state.user.org === "hyundai" && ["pending", "approving", "approved"].includes(plan.status);
     const canManage = !readOnly && (state.user.org === "hyundai" || plan.company === state.user.company); // 협력업체는 같은 업체 건만
-    const canEdit = plan.status !== "approved" && canManage;
+    const canEdit = (plan.status !== "approved" || state.user.isAdmin) && canManage;
     const canSubmit = plan.status === "draft" && canManage;
     const canDelete =
       (state.user.isAdmin && ["approved", "rejected"].includes(plan.status)) ||
