@@ -801,14 +801,13 @@ async function loadFormContent(container, planId) {
   };
   const planPromise = planId ? api("/api/plans/" + encodeURIComponent(planId)).then((data) => data.plan) : Promise.resolve(plan);
   const companiesRequest = state.user.org === "vendor" ? Promise.resolve({ companies: [state.user.company] }) : api("/api/companies", { auth: false });
-  const summariesRequest = api("/api/plans").then((data) => data.plans).catch(() => []);
   const managersRequest = planPromise.then((loadedPlan) => loadedPlan.company
     ? api("/api/managers?org=vendor&company=" + encodeURIComponent(loadedPlan.company)).then((data) => data.managers).catch(() => [])
     : []);
-  let formCompanies, plansSummary, vendorManagers;
+  let formCompanies, vendorManagers;
   try {
     let companiesRes;
-    [plan, companiesRes, plansSummary, vendorManagers] = await Promise.all([planPromise, companiesRequest, summariesRequest, managersRequest]);
+    [plan, companiesRes, vendorManagers] = await Promise.all([planPromise, companiesRequest, managersRequest]);
     formCompanies = companiesRes.companies;
   } catch (e) {
     container.innerHTML = `<div class="card error-text">${esc(e.message)}</div>`;
@@ -918,10 +917,7 @@ async function loadFormContent(container, planId) {
     if (type === "점심") setTimeSelects("11:30", "13:00");
     else if (type === "야간") setTimeSelects("17:00", "18:00");
     else if (type === "휴일") setTimeSelects("07:00", "17:30");
-    else if (type === "조출") {
-      const company = document.getElementById("f_company").value;
-      setTimeSelects(latestJochulStart(plansSummary, company) || "06:00", "07:00");
-    }
+    else if (type === "조출") setTimeSelects("06:00", "07:00");
   };
   document.getElementById("f_workType").addEventListener("change", applyWorkTypeDefaults);
   document.getElementById("f_company").addEventListener("change", () => {
@@ -943,11 +939,6 @@ function setTimeSelects(start, end) {
   document.getElementById("f_startMin").value = sm;
   document.getElementById("f_endHour").value = eh;
   document.getElementById("f_endMin").value = em;
-}
-// 같은 업체의 가장 최근 조출 작업 시작시간 (목록은 최신순 정렬)
-function latestJochulStart(plans, company) {
-  const found = plans.find((p) => p.workType === "조출" && p.workTimeStart && (!company || p.company === company));
-  return found ? found.workTimeStart : null;
 }
 // 작성화면용 날짜 표시: 2026.09.29(화)
 function formatDateLabel(dateStr) {
