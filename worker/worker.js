@@ -1035,7 +1035,7 @@ async function handleSavePlan(request, env, currentUser) {
     if (!isHyundai && existingFile.json.company !== currentUser.company) {
       return json({ error: "자기 업체의 작업계획서만 작성·수정할 수 있습니다." }, 403, env);
     }
-    if (existingFile.json.status === "approved") {
+    if (existingFile.json.status === "approved" && !currentUser.isAdmin) {
       return json({ error: "승인완료된 작업계획서는 수정할 수 없습니다." }, 400, env);
     }
   }
