@@ -212,6 +212,7 @@ const CONFIG = {
 const state = {
   vendorTestMode: false, // Request-scoped role reduction; resets on reload/login/logout.
   idToken: null,
+  sessionExpiresAt: null,
   authStatus: null, // not_registered | pending | rejected | approved
   user: null, // {email, name, company, org, signatureUrl}
   companies: [],
@@ -244,6 +245,11 @@ function clearDirectoryCache() {
   directoryRequests.clear();
 }
 async function api(path, { method = "GET", body, auth = true } = {}) {
+  if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) {
+    logout();
+    throw Object.assign(new Error("자정이 되어 로그인이 만료되었습니다. 다시 로그인해주세요."), { status: 401 });
+  }
+  const requestSessionExpiresAt = state.sessionExpiresAt;
   const token = auth ? state.idToken : null;
   const ttl = method === "GET" ? (path === "/api/companies" ? 60000 : path.startsWith("/api/managers?") ? 30000 : 0) : 0;
   const testMode = state.vendorTestMode && (auth || path === "/api/auth");
@@ -265,7 +271,17 @@ async function api(path, { method = "GET", body, auth = true } = {}) {
         method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "요청 처리 중 오류가 발생했습니다.");
+      if (!res.ok) {
+        if (res.status === 401 && token === state.idToken && token) logout();
+        throw Object.assign(new Error(data.error || "요청 처리 중 오류가 발생했습니다."), { status: res.status, code: data.code });
+      }
+      if (requestSessionExpiresAt && Date.now() >= requestSessionExpiresAt) {
+        if (!token || token === state.idToken) logout();
+        throw Object.assign(new Error("자정이 되어 로그인이 만료되었습니다. 다시 로그인해주세요."), { status: 401 });
+      }
+      if (token && token !== state.idToken) {
+        throw Object.assign(new Error("로그인 상태가 변경되었습니다. 다시 시도해주세요."), { status: 401 });
+      }
       if (method !== "GET") clearDirectoryCache();
       if (ttl && generation === directoryGeneration) directoryCache.set(key, { data, expires: Date.now() + ttl });
       return data;
@@ -424,7 +440,7 @@ function renderLogin() {
         <img class="login-icon" src="assets/app-icon.png" width="92" height="92" alt="보충작업 계획서 앱 아이콘" />
         <h1 class="login-title">보충작업계획서</h1>
         <div id="gsi-button-container"></div>
-        <p class="login-help">Google 계정으로 로그인 후 이용할 수 있습니다.</p>
+        <p class="login-help">Google 계정으로 로그인 후 이용할 수 있습니다.<br>로그인은 매일 자정(한국 시간)에 만료됩니다.</p>
       </div>
     </div>`;
   setTimeout(initGoogleButton, 0);
@@ -469,10 +485,14 @@ window.addEventListener("resize", () => {
 async function onGoogleCredential(response) {
   state.vendorTestMode = false;
   clearDirectoryCache();
+  clearTimeout(sessionExpiryTimer);
+  state.sessionExpiresAt = null;
   state.idToken = response.credential;
-  localStorage.setItem("idToken", state.idToken);
+  const loginToken = state.idToken;
   try {
-    const data = await api("/api/auth", { method: "POST", body: { idToken: state.idToken }, auth: false });
+    const data = await api("/api/auth", { method: "POST", body: { idToken: state.idToken, issueSession: true }, auth: false });
+    if (state.idToken !== loginToken) return;
+    saveSession(data);
     state.authStatus = data.status;
     if (data.status === "approved") {
       state.user = data.user;
@@ -491,7 +511,10 @@ async function onGoogleCredential(response) {
 function logout() {
   state.vendorTestMode = false;
   clearDirectoryCache();
+  clearTimeout(sessionExpiryTimer);
+  localStorage.removeItem("overtimeSession");
   localStorage.removeItem("idToken");
+  state.sessionExpiresAt = null;
   state.idToken = null;
   state.user = null;
   state.pendingSignupCount = null;
@@ -2186,48 +2209,83 @@ function renderBootLoading() {
   document.getElementById("app").innerHTML = `<main><div class="card center muted" style="margin-top:40px;">로그인 확인 중...</div></main>`;
 }
 
-function attemptSilentGoogleLogin() {
-  if (!window.google || !window.google.accounts) {
-    setTimeout(attemptSilentGoogleLogin, 300);
-    return;
+let sessionExpiryTimer;
+function scheduleSessionExpiry() {
+  clearTimeout(sessionExpiryTimer);
+  if (state.sessionExpiresAt) {
+    sessionExpiryTimer = setTimeout(() => {
+      if (Date.now() >= state.sessionExpiresAt) logout();
+      else scheduleSessionExpiry();
+    }, Math.max(0, state.sessionExpiresAt - Date.now()));
   }
-  google.accounts.id.initialize({
-    client_id: CONFIG.GOOGLE_CLIENT_ID,
-    callback: onGoogleCredential,
-    auto_select: true,
-  });
-  google.accounts.id.prompt((notification) => {
-    if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-      render(); // 조용한 재로그인 실패 → 일반 로그인 화면으로
-    }
-  });
 }
+function saveSession(data) {
+  if (typeof data.sessionToken !== "string" || !data.sessionToken.startsWith("ot1.") ||
+      !Number.isFinite(data.sessionExpiresAt) || data.sessionExpiresAt <= Date.now()) {
+    throw new Error("로그인 유지 기능을 사용할 수 없습니다. 최신 서버 배포와 설정을 확인해주세요.");
+  }
+  state.idToken = data.sessionToken;
+  state.sessionExpiresAt = data.sessionExpiresAt;
+  localStorage.setItem("overtimeSession", JSON.stringify({ token: data.sessionToken, expiresAt: data.sessionExpiresAt }));
+  localStorage.removeItem("idToken");
+  scheduleSessionExpiry();
+}
+window.addEventListener("pageshow", () => {
+  if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) logout();
+  else scheduleSessionExpiry();
+});
+document.addEventListener?.("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) logout();
+    else scheduleSessionExpiry();
+  }
+});
+window.addEventListener("focus", () => {
+  if (state.sessionExpiresAt && Date.now() >= state.sessionExpiresAt) logout();
+});
+window.addEventListener("storage", (event) => {
+  if (event.key === "overtimeSession") {
+    if (!event.newValue) logout();
+    else bootAuth();
+  }
+});
 
-function bootAuth() {
-  const saved = localStorage.getItem("idToken");
-  if (!saved) {
-    render();
+async function bootAuth() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem("overtimeSession") || "null"); }
+  catch { localStorage.removeItem("overtimeSession"); }
+  const legacy = localStorage.getItem("idToken");
+  if (saved && (typeof saved.token !== "string" || !saved.token.startsWith("ot1.") ||
+      !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now())) {
+    logout();
     return;
   }
+  if (!saved && !legacy) { render(); return; }
   renderBootLoading();
-  state.idToken = saved;
-  api("/api/auth", { method: "POST", body: { idToken: saved }, auth: false })
-    .then((data) => {
-      state.authStatus = data.status;
-      if (data.status === "approved") {
-        state.user = data.user;
-        state.pendingSignupCount = null;
-        go("home");
-        refreshSignupCount();
-      } else {
-        render();
-      }
-    })
-    .catch(() => {
-      localStorage.removeItem("idToken");
-      state.idToken = null;
-      attemptSilentGoogleLogin();
-    });
+  state.idToken = saved ? saved.token : legacy;
+  state.sessionExpiresAt = saved ? saved.expiresAt : null;
+  scheduleSessionExpiry();
+  const restoringToken = state.idToken;
+  try {
+    const data = await api("/api/auth", { method: "POST", body: { idToken: restoringToken, ...(!saved ? { issueSession: true } : {}) }, auth: false });
+    if (state.idToken !== restoringToken) return;
+    if (!saved) saveSession(data);
+    state.authStatus = data.status;
+    state.pendingRegisterInfo = { email: data.email, name: data.name };
+    if (data.status === "approved") {
+      state.user = data.user;
+      state.pendingSignupCount = null;
+      go("home");
+      refreshSignupCount();
+    } else { render(); }
+  } catch (error) {
+    if (state.idToken !== restoringToken) return;
+    if (error.status === 401) { logout(); return; }
+    // Network/5xx failures must not delete a valid session.
+    const app = document.getElementById("app");
+    app.innerHTML = `<main><div class="card center"><p>로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.</p><button id="retryAuth">다시 시도</button></div></main>`;
+    app.querySelector("#retryAuth").addEventListener("click", bootAuth);
+  }
 }
 
 bootAuth();
