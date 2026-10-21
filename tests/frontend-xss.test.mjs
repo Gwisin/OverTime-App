@@ -551,31 +551,61 @@ test("failed directory requests retry and plans are always fetched fresh", async
   assert.equal(calls, 4);
 });
 
-test("new vendor form starts independent requests together and skips company lookup", async () => {
+for (const editing of [false, true]) test(`${editing ? "edit" : "new"} vendor form skips plan history and uses fixed early-work defaults`, async () => {
   const calls = [];
-  const plans = deferred(), managers = deferred();
+  const managers = deferred();
+  const plan = { id: "early-plan", company: "협력사", workDate: "2026-10-11", workType: "조출", workTimeStart: "05:30", workTimeEnd: "07:30" };
+  const initialValues = {
+    f_company: plan.company, f_workDate: plan.workDate, f_workType: editing ? plan.workType : "점심",
+    f_startHour: editing ? "05" : "", f_startMin: editing ? "30" : "",
+    f_endHour: editing ? "07" : "", f_endMin: editing ? "30" : "",
+  };
   const elements = Object.fromEntries(["f_company", "f_workDate", "f_workDateLabel", "f_workType", "f_vendorManager", "f_vendorManagerManual", "f_startHour", "f_startMin", "f_endHour", "f_endMin"].map((id) => [id, {
-    value: id === "f_workType" ? "점심" : id === "f_workDate" ? "2026-10-11" : "", addEventListener() {},
+    value: initialValues[id] || "", listeners: {},
+    addEventListener(event, handler) { (this.listeners[event] ||= []).push(handler); },
     classList: { add() {}, toggle() {} },
   }]));
   const context = makeContext(async (url) => {
     calls.push(url);
-    if (url.endsWith("/api/plans")) return plans.promise;
+    if (editing && url.endsWith("/api/plans/early-plan")) return response({ plan });
     if (url.includes("/api/managers?")) return managers.promise;
     assert.fail(`Unexpected request: ${url}`);
   }, { document: { getElementById: (id) => elements[id] } });
   context.__setStateUser({ company: "협력사", org: "vendor" });
   const container = { innerHTML: "", querySelector: () => null };
-  const loading = context.loadForm(container);
+  const loading = context.loadForm(container, editing ? plan.id : undefined);
   await new Promise(setImmediate);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, editing ? 2 : 1);
+  assert.equal(calls.some((url) => url.endsWith("/api/plans")), false);
   assert.equal(calls.some((url) => url.includes("/companies")), false);
-  plans.resolve(response({ plans: [] }));
   managers.resolve(response({ managers: [] }));
   await loading;
-  assert.match(container.innerHTML, /작업계획서 작성/);
-  assert.equal(elements.f_startHour.value, "11");
-  assert.equal(elements.f_endHour.value, "13");
+  assert.match(container.innerHTML, editing ? /작업계획서 수정/ : /작업계획서 작성/);
+  const times = () => ["f_startHour", "f_startMin", "f_endHour", "f_endMin"].map((id) => elements[id].value);
+  assert.deepEqual(times(), editing ? ["05", "30", "07", "30"] : ["11", "30", "13", "00"]);
+  if (editing) {
+    assert.match(container.innerHTML, /id="f_startHour">[^<]*(?:<option[^>]*>[^<]*<\/option>)*<option value="05" selected>/);
+    assert.match(container.innerHTML, /id="f_startMin">[^<]*(?:<option[^>]*>[^<]*<\/option>)*<option value="30" selected>/);
+  }
+  const selectWorkType = (type) => {
+    elements.f_workType.value = type;
+    elements.f_workType.listeners.change.forEach((handler) => handler());
+  };
+  selectWorkType("야간");
+  assert.deepEqual(times(), ["17", "00", "18", "00"]);
+  selectWorkType("조출");
+  assert.deepEqual(times(), ["06", "00", "07", "00"]);
+  elements.f_startHour.value = "05";
+  elements.f_startMin.value = "30";
+  await new Promise(setImmediate);
+  assert.deepEqual(times(), ["05", "30", "07", "00"]);
+  selectWorkType("휴일");
+  assert.deepEqual(times(), ["07", "00", "17", "30"]);
+  selectWorkType("점심");
+  assert.deepEqual(times(), ["11", "30", "13", "00"]);
+  selectWorkType("기상특보");
+  assert.deepEqual(times(), ["11", "30", "13", "00"]);
+  assert.equal(calls.length, editing ? 2 : 1);
 });
 
 test("PDF libraries load on demand, share loads, and recover from errors", async () => {
