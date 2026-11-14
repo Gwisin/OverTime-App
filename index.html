@@ -99,25 +99,42 @@
   .badge.rejected { background: #fdecea; color: var(--danger); }
   .badge.suspended { background: #f2f4f6; color: #4e5968; }
 
-  /* 작업계획서 목록 카드 */
-  .plan-list { display: flex; flex-direction: column; gap: 10px; }
-  .plan-item { padding: 16px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer; }
-  .plan-item:hover { box-shadow: 0 2px 10px rgba(16, 24, 40, 0.08); }
-  .plan-item .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  .plan-item .date { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; }
-  .plan-item .time { margin-top: 2px; font-size: 15px; font-weight: 500; color: var(--sub); }
-  .plan-item .time .dot { margin: 0 6px; color: #b0b8c1; }
-  .plan-item .time .wtype { font-weight: 600; color: var(--text); }
-  .plan-item .meta { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
-  .plan-item .meta-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--sub); }
-  .plan-item .meta-row.company { font-size: 14px; font-weight: 500; color: var(--text); }
-  .plan-item .meta-row.wrap { flex-wrap: wrap; gap: 4px 14px; }
-  .plan-item .meta-item { display: inline-flex; align-items: flex-start; gap: 6px; }
-  .plan-item .meta-row svg { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; color: #98a2b3; }
-  .plan-item .sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
-  /* 카드 안에 들어간 목록(가입 승인 등)은 박스 없이 구분선으로 */
+  /* 홈 작업계획서 목록 */
+  .home-plan-list { position: relative; }
+  .home-plan-table { display: none; }
+  .home-plan-day { margin-bottom: 10px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .home-plan-day h3 { margin: 0; padding: 8px 12px; color: var(--sub); font-size: 13px; }
+  .home-plan-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 10px; width: 100%; height: auto; min-height: 48px; padding: 6px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left; }
+  .home-plan-entry:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+  .home-plan-entry strong { overflow-wrap: anywhere; }
+  .home-plan-entry .muted { grid-column: 1; overflow-wrap: anywhere; font-weight: 400; }
+  .home-plan-entry .badge { grid-column: 2; grid-row: 1 / span 2; }
+  @media (min-width: 1024px) {
+    main.home-main { max-width: 1200px; }
+    .home-plan-cards { display: none; }
+    .home-plan-table { display: block; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+    .home-plan-table table { width: 100%; border-spacing: 0; table-layout: fixed; text-align: left; }
+    .home-plan-table th, .home-plan-table td { padding: 9px 12px; overflow-wrap: anywhere; }
+    .home-plan-table thead { color: var(--sub); font-size: 13px; }
+    .home-plan-table thead th:nth-child(1), .home-plan-table thead th:nth-child(2) { width: 124px; }
+    .home-plan-table thead th:nth-child(3), .home-plan-table thead th:nth-child(6) { width: 100px; }
+    .home-plan-table thead th:nth-child(5) { width: 184px; }
+    .home-plan-table tbody tr > * { border-top: 1px solid var(--line); }
+    .home-plan-table tbody + tbody tr:first-child > * { border-top: 2px solid var(--border); }
+    .home-plan-table tbody th { background: var(--bg); vertical-align: top; }
+    .home-plan-table tbody:last-child th { border-bottom-left-radius: var(--radius); }
+    .home-plan-table tr[data-plan-id] { cursor: pointer; }
+    .home-plan-table tr:hover td, .home-plan-table tr:focus-within td { background: #f5f8fd; }
+    .home-plan-company { display: block; height: auto; padding: 0; border: 0; background: transparent; font: inherit; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
+    .home-plan-preview { position: absolute; z-index: 2; width: min(320px, 100%); padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(16, 24, 40, .15); pointer-events: none; }
+    .home-plan-preview p { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
+  }
+
+  /* 가입 승인 목록 */
   .card .plan-item { padding: 14px 0; background: transparent; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; cursor: default; }
   .card .plan-item:last-child { padding-bottom: 0; border-bottom: none; }
+  .plan-item .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .plan-item .sub { margin-top: 4px; font-size: 13px; color: var(--muted); }
   .plan-item .row button { height: 40px; }
 
   .approval-step { display: flex; align-items: baseline; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -209,6 +226,7 @@ const CONFIG = {
 /* =========================================================
    전역 상태
    ========================================================= */
+const PLAN_DAYS_PER_PAGE = 10;
 const state = {
   vendorTestMode: false, // Request-scoped role reduction; resets on reload/login/logout.
   idToken: null,
@@ -217,7 +235,7 @@ const state = {
   user: null, // {email, name, company, org, signatureUrl}
   companies: [],
   homePlans: [], // 홈 목록(정렬 완료) — '더보기'에서 재사용
-  planVisibleCount: 10, // 홈 목록에 보여줄 개수 (더보기 누를 때마다 +10, 조회 범위를 바꾸면 10으로 초기화)
+  planVisibleDays: PLAN_DAYS_PER_PAGE, // 홈 목록에 보여줄 날짜 수
   planViewFilter: "", // "" = 역할별 기본값(협력업체는 내 업체, 현대건설/ADMIN은 전체), "__all__" = 전체, 그 외 = 특정 업체명
   route: "login",
   currentPlan: null,
@@ -348,6 +366,7 @@ function render() {
   app.innerHTML = "";
   if (!isLoginScreen) app.appendChild(renderHeader());
   const main = document.createElement("main");
+  if (state.user && state.route === "home") main.className = "home-main";
   if (state.user?.vendorTestMode) {
     const notice = document.createElement("div");
     notice.className = "card";
@@ -679,8 +698,7 @@ function planViewFilterOptionsHtml(companies) {
   return html;
 }
 
-// 홈 목록: 작업일자 최신순(같은 날짜면 작업 시작시간이 늦은 순) → 10개씩 보여주고 '더보기'로 10개씩 추가
-const PLAN_PAGE_SIZE = 10;
+// 홈 목록: 작업일자 최신순(같은 날짜면 작업 시작시간이 늦은 순)
 const PLAN_BADGE_LABEL = { draft: "작성중", pending: "검토중", approving: "승인중", approved: "승인완료", rejected: "반려" };
 function planStatusClass(status) {
   return Object.prototype.hasOwnProperty.call(PLAN_BADGE_LABEL, status) ? status : "";
@@ -696,50 +714,135 @@ function sortPlansForList(plans) {
       String(b.id || "").localeCompare(String(a.id || ""))
   );
 }
-function planCardHtml(p) {
-  const badgeLabel = PLAN_BADGE_LABEL;
-  const displayStatus = planDisplayStatus(p);
-  const statusClass = planStatusClass(displayStatus);
-  const statusLabel = badgeLabel[displayStatus] || displayStatus || "-";
-  const vendorManagerName = cleanName(p.vendorManagerName) || "-";
-  const hyundaiManagerName = cleanName(p.hyundaiManagerName) || (p.status === "approved" ? p.approverName : "") || "확인중";
-  const executionReviewSummary = p.executionReviewerName ? `검토 ${p.executionReviewerName}` : "검토중";
-  const safetyApprovalSummary = p.safetyApproverName || (p.status === "approved" ? p.approverName : "");
-  return `
-          <div class="plan-item" data-plan-id="${esc(p.id)}">
-            <div class="top">
-              <div>
-                <div class="date">${esc(formatDateLabel(p.workDate))}</div>
-                <div class="time">${p.workTimeStart && p.workTimeEnd ? `<span>${esc(p.workTimeStart)}~${esc(p.workTimeEnd)}</span><span class="dot">·</span>` : ""}<span class="wtype">${esc(p.workType)}</span></div>
-              </div>
-              <span class="badge ${statusClass}">${esc(statusLabel)}</span>
-            </div>
-            <div class="meta">
-              <div class="meta-row company"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M8 8h2M8 12h2M8 16h2"/><path d="M3 21h18"/></svg><span>${esc(p.company)}</span></div>
-              <div class="meta-row wrap">
-                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 7.5l3 3"/></svg><span>작성 ${esc(p.writerName || "-")}</span></span>
-                <span class="meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg><span>${esc(executionReviewSummary)} · ${esc(safetyApprovalSummary ? `승인 ${safetyApprovalSummary}` : "승인중")}</span></span>
-              </div>
-              <div class="meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1"/><path d="M16 5.2a3 3 0 0 1 0 5.6"/><path d="M18 14.3a5 5 0 0 1 2.5 4.7v1"/></svg><span>상주관리자 ${esc(vendorManagerName)} · 현대건설 ${esc(hyundaiManagerName)}</span></div>
-            </div>
-          </div>`;
+function groupPlansByDate(plans) {
+  const days = new Map();
+  for (const plan of plans) {
+    const date = plan.workDate || "";
+    if (!days.has(date)) days.set(date, []);
+    days.get(date).push(plan);
+  }
+  return days;
+}
+function planListTime(plan) {
+  return plan.workTimeStart && plan.workTimeEnd ? `${plan.workTimeStart}~${plan.workTimeEnd}` : "-";
+}
+function planListBadgeHtml(plan) {
+  const status = planDisplayStatus(plan);
+  const statusClass = planStatusClass(status);
+  const label = statusClass ? PLAN_BADGE_LABEL[statusClass] : status;
+  return `<span class="badge ${statusClass}">${esc(label || "-")}</span>`;
+}
+function planDateLabel(date) {
+  return formatDateLabel(date) || "일자 미정";
+}
+function planTableGroupHtml(date, plans) {
+  return `<tbody>${plans.map((plan, index) => {
+    const dateHeader = index === 0 ? `<th scope="rowgroup" rowspan="${plans.length}">${esc(planDateLabel(date))}</th>` : "";
+    const manager = cleanName(plan.hyundaiManagerName) || (plan.status === "approved" ? plan.approverName : "") || "확인중";
+    return `<tr data-plan-id="${esc(plan.id)}">
+      ${dateHeader}
+      <td>${esc(planListTime(plan))}</td>
+      <td>${esc(plan.workType || "-")}</td>
+      <td><button type="button" class="home-plan-company">${esc(plan.company || "-")}</button></td>
+      <td>${esc(manager)}</td>
+      <td>${planListBadgeHtml(plan)}</td>
+    </tr>`;
+  }).join("")}</tbody>`;
+}
+function planCardHtml(date, plans) {
+  return `<section class="home-plan-day">
+    <h3>${esc(planDateLabel(date))}</h3>
+    ${plans.map((plan) => `<button type="button" class="home-plan-entry" data-plan-id="${esc(plan.id)}">
+      <strong>${esc(plan.company || "-")}</strong>
+      <span class="muted">${esc(planListTime(plan))}</span>
+      ${planListBadgeHtml(plan)}
+    </button>`).join("")}
+  </section>`;
+}
+function bindPlanListActions(wrap) {
+  const preview = wrap.querySelector(".home-plan-preview");
+  const list = preview.parentElement;
+  let timer;
+  let activePreview;
+  function hidePreview() {
+    clearTimeout(timer);
+    activePreview = null;
+    preview.hidden = true;
+  }
+  async function showPreview(request) {
+    const { row } = request;
+    if (activePreview !== request || !row.isConnected || !row.getClientRects().length) return;
+    const rowBounds = row.getBoundingClientRect();
+    const listBounds = list.getBoundingClientRect();
+    const companyButton = row.querySelector(".home-plan-company");
+    const content = preview.querySelector("p");
+    preview.querySelector("strong").textContent = companyButton.textContent;
+    content.textContent = "작업 내용 불러오는 중…";
+    preview.style.top = `${rowBounds.bottom - listBounds.top + 4}px`;
+    preview.hidden = false;
+    const offset = companyButton.getBoundingClientRect().left - listBounds.left;
+    preview.style.left = `${Math.max(0, Math.min(offset, listBounds.width - preview.offsetWidth))}px`;
+    try {
+      const { plan } = await api("/api/plans/" + encodeURIComponent(row.dataset.planId));
+      if (activePreview !== request || !row.isConnected) return;
+      const work = String(plan.workLocation || "").trim();
+      content.textContent = [
+        work ? (work.length > 140 ? work.slice(0, 140) + "…" : work) : "등록된 작업 내용이 없습니다.",
+        plan.writerName ? `작성 ${plan.writerName}` : "",
+      ].filter(Boolean).join("\n");
+    } catch {
+      if (activePreview === request) content.textContent = "미리보기를 불러오지 못했습니다. 행을 클릭해 상세를 확인하세요.";
+    }
+  }
+  wrap.querySelectorAll("[data-plan-id]").forEach((item) => {
+    item.addEventListener("click", () => {
+      hidePreview();
+      go("detail", item.dataset.planId);
+    });
+  });
+  wrap.querySelectorAll("tr[data-plan-id]").forEach((row) => {
+    row.addEventListener("pointerenter", (event) => {
+      if (event.pointerType !== "mouse") return;
+      hidePreview();
+      const request = { row };
+      activePreview = request;
+      timer = setTimeout(() => showPreview(request), 350);
+    });
+    row.addEventListener("pointerleave", hidePreview);
+  });
+  wrap.onkeydown = (event) => {
+    if (event.key === "Escape") hidePreview();
+  };
 }
 function renderPlanListSection() {
   const wrap = document.getElementById("planListWrap");
   if (!wrap) return;
-  const list = state.homePlans || [];
-  const shown = list.slice(0, state.planVisibleCount);
-  wrap.innerHTML =
-    (list.length === 0 ? `<p class="muted">등록된 작업계획서가 없습니다.</p>` : "") +
-    `<div class="plan-list">${shown.map(planCardHtml).join("")}</div>` +
-    (list.length > shown.length ? `<button class="block" onclick="showMorePlans()">더보기 <span class="muted">(${shown.length}/${list.length})</span></button>` : "");
-  wrap.querySelectorAll(".plan-item[data-plan-id]").forEach((item) => {
-    item.addEventListener("click", () => go("detail", item.dataset.planId));
+  const days = groupPlansByDate(state.homePlans);
+  if (!days.size) {
+    wrap.innerHTML = `<p class="muted">등록된 작업계획서가 없습니다.</p>`;
+    return;
+  }
+  const shown = [...days].slice(0, state.planVisibleDays);
+  wrap.innerHTML = `
+    <div class="home-plan-list">
+      <div class="home-plan-table">
+        <table aria-labelledby="homePlanListTitle">
+          <thead><tr>
+            <th scope="col">일자</th><th scope="col">시간</th><th scope="col">구분</th>
+            <th scope="col">업체</th><th scope="col">현대건설 상주관리자</th><th scope="col">상태</th>
+          </tr></thead>
+          ${shown.map(([date, plans]) => planTableGroupHtml(date, plans)).join("")}
+        </table>
+      </div>
+      <div class="home-plan-cards">${shown.map(([date, plans]) => planCardHtml(date, plans)).join("")}</div>
+      <div class="home-plan-preview" hidden aria-hidden="true"><strong></strong><p class="muted"></p></div>
+    </div>
+    ${days.size > shown.length ? `<button type="button" class="block" id="showMorePlans">더보기 <span class="muted">(${shown.length}/${days.size}일)</span></button>` : ""}`;
+  bindPlanListActions(wrap);
+  wrap.querySelector("#showMorePlans")?.addEventListener("click", () => {
+    state.planVisibleDays += PLAN_DAYS_PER_PAGE;
+    renderPlanListSection();
   });
-}
-function showMorePlans() {
-  state.planVisibleCount += PLAN_PAGE_SIZE;
-  renderPlanListSection();
 }
 
 async function loadHome(container) {
@@ -754,13 +857,13 @@ async function loadHomeContent(container) {
       <button class="primary block cta" onclick="go('form')">+ 새 작업계획서 작성</button>
       <label style="margin-top:18px;">조회 범위</label>
       <select id="planViewFilter">${planViewFilterOptionsHtml(companiesRes.companies)}</select>
-      <h2 class="section-title">작업계획서 목록</h2>
+      <h2 class="section-title" id="homePlanListTitle">작업계획서 목록</h2>
       <div id="planListWrap"></div>`;
     state.homePlans = sortPlansForList(data.plans);
     renderPlanListSection();
     document.getElementById("planViewFilter").addEventListener("change", (e) => {
       state.planViewFilter = e.target.value;
-      state.planVisibleCount = PLAN_PAGE_SIZE;
+      state.planVisibleDays = PLAN_DAYS_PER_PAGE;
       loadHome(container);
     });
   } catch (e) {
