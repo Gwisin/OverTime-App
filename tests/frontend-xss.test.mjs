@@ -582,7 +582,7 @@ for (const editing of [false, true]) test(`${editing ? "edit" : "new"} vendor fo
   await loading;
   assert.match(container.innerHTML, editing ? /작업계획서 수정/ : /작업계획서 작성/);
   const times = () => ["f_startHour", "f_startMin", "f_endHour", "f_endMin"].map((id) => elements[id].value);
-  assert.deepEqual(times(), editing ? ["05", "30", "07", "30"] : ["11", "30", "13", "00"]);
+  assert.deepEqual(times(), editing ? ["05", "30", "07", "30"] : ["12", "30", "13", "00"]);
   if (editing) {
     assert.match(container.innerHTML, /id="f_startHour">[^<]*(?:<option[^>]*>[^<]*<\/option>)*<option value="05" selected>/);
     assert.match(container.innerHTML, /id="f_startMin">[^<]*(?:<option[^>]*>[^<]*<\/option>)*<option value="30" selected>/);
@@ -602,9 +602,9 @@ for (const editing of [false, true]) test(`${editing ? "edit" : "new"} vendor fo
   selectWorkType("휴일");
   assert.deepEqual(times(), ["07", "00", "17", "30"]);
   selectWorkType("점심");
-  assert.deepEqual(times(), ["11", "30", "13", "00"]);
+  assert.deepEqual(times(), ["12", "30", "13", "00"]);
   selectWorkType("기상특보");
-  assert.deepEqual(times(), ["11", "30", "13", "00"]);
+  assert.deepEqual(times(), ["12", "30", "13", "00"]);
   assert.equal(calls.length, editing ? 2 : 1);
 });
 

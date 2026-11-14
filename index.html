@@ -914,7 +914,7 @@ async function loadFormContent(container, planId) {
   // 작업구분별 작업시간 자동 입력
   const applyWorkTypeDefaults = () => {
     const type = document.getElementById("f_workType").value;
-    if (type === "점심") setTimeSelects("11:30", "13:00");
+    if (type === "점심") setTimeSelects("12:30", "13:00");
     else if (type === "야간") setTimeSelects("17:00", "18:00");
     else if (type === "휴일") setTimeSelects("07:00", "17:30");
     else if (type === "조출") setTimeSelects("06:00", "07:00");
