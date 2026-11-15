@@ -29,61 +29,107 @@ function makeContext(fetchImpl = async () => { throw new Error("unexpected fetch
 
 const attack = `<img src=x onerror="globalThis.xss=1">'`;
 
-test("home plan cards escape data and do not build inline handlers", () => {
+test("home plan rows and cards escape data and avoid inline handlers", () => {
   const context = makeContext();
-  const card = context.planCardHtml({
-    id: attack,
-    workDate: "2026-10-02",
-    workTimeStart: attack,
-    workTimeEnd: attack,
-    workType: attack,
-    status: attack,
-    company: attack,
-    writerName: attack,
-    approverName: attack,
-    vendorManagerName: attack,
-    hyundaiManagerName: attack,
-  });
-
-  assert.doesNotMatch(card, /<img/i);
-  assert.doesNotMatch(card, /onclick=/i);
-  assert.match(card, /&lt;img/);
-  assert.doesNotMatch(card, /상주관리자 협력업체/);
+  const plan = {
+    id: attack, workTimeStart: attack, workTimeEnd: attack, workType: attack,
+    status: attack, company: attack, hyundaiManagerName: attack,
+  };
+  for (const render of [context.planCardHtml, context.planTableGroupHtml]) {
+    const markup = render("2026-10-02", [plan]);
+    assert.doesNotMatch(markup, /<img|onclick=/i);
+    assert.match(markup, /&lt;img/);
+  }
   assert.equal(context.planStatusClass(attack), "");
 });
 
-test("home plan cards use review and approval wording", () => {
-  const context = makeContext();
-  const basePlan = {
-    id: "plan-1",
-    workDate: "2026-10-24",
-    workType: "야간",
-    status: "pending",
-    company: "테스트 업체",
-    writerName: "작성자",
+test("home groups whole work dates in both layouts and paginates by date", () => {
+  const wrap = {
+    innerHTML: "",
+    querySelector: (selector) => selector === "#showMorePlans" && wrap.innerHTML.includes('id="showMorePlans"')
+      ? { addEventListener: (_event, callback) => { wrap.showMore = callback; } }
+      : null,
   };
-
-  const pendingCard = context.planCardHtml(basePlan);
-  assert.match(pendingCard, /검토중 · 승인중/);
-  assert.doesNotMatch(pendingCard, /수행팀 대기중|안전팀 대기중/);
-
-  const approvedCard = context.planCardHtml({
-    ...basePlan,
-    status: "approved",
-    executionReviewerName: "검토자",
-    safetyApproverName: "승인자",
-  });
-  assert.match(approvedCard, /검토 검토자 · 승인 승인자/);
-  assert.doesNotMatch(approvedCard, /수행팀 검토자|안전팀 승인자/);
+  const context = makeContext(undefined, { document: { getElementById: () => wrap } });
+  context.bindPlanListActions = () => {};
+  const plans = Array.from({ length: 11 }, (_, index) => ({
+    id: `plan-${index + 1}`, company: "협력업체", workDate: `2026-10-${String(index + 1).padStart(2, "0")}`,
+    status: "pending", workTimeStart: "06:00", workTimeEnd: "07:00",
+  }));
+  plans.push({ ...plans[1], id: "same-day", workTimeStart: "18:00", workTimeEnd: "20:00" });
+  context.testPlans = plans;
+  vm.runInContext("state.homePlans = sortPlansForList(testPlans); renderPlanListSection()", context);
+  assert.match(wrap.innerHTML, /rowspan="2">2026\.10\.02/);
+  assert.equal((wrap.innerHTML.match(/data-plan-id="same-day"/g) || []).length, 2);
+  assert.ok(wrap.innerHTML.indexOf('data-plan-id="same-day"') < wrap.innerHTML.indexOf('data-plan-id="plan-2"'));
+  assert.doesNotMatch(wrap.innerHTML, /data-plan-id="plan-1"/);
+  assert.match(wrap.innerHTML, /10\/11일/);
+  wrap.showMore();
+  assert.match(wrap.innerHTML, /data-plan-id="plan-1"/);
+  assert.doesNotMatch(wrap.innerHTML, /id="showMorePlans"/);
 });
 
 test("list badges distinguish rejected drafts without changing workflow status", () => {
   const context = makeContext();
   const plan = { id: "plan-1", status: "draft", rejectedAt: "2026-10-11T00:00:00Z" };
-  assert.match(context.planCardHtml(plan), /badge rejected">반려/);
-  assert.equal(plan.status, "draft");
-  assert.match(context.planCardHtml({ ...plan, rejectedAt: null }), /badge draft">작성중/);
-  assert.match(context.planCardHtml({ ...plan, status: "pending" }), /badge pending">검토중/);
+  for (const render of [context.planCardHtml, context.planTableGroupHtml]) {
+    assert.match(render("", [plan]), /badge rejected">반려/);
+    assert.equal(plan.status, "draft");
+    assert.match(render("", [{ ...plan, rejectedAt: null }]), /badge draft">작성중/);
+    assert.match(render("", [{ ...plan, status: "pending" }]), /badge pending">검토중/);
+  }
+});
+
+test("desktop hover previews the authorized details and list entries open the existing detail route", async () => {
+  const context = makeContext(undefined, {
+    setTimeout: (callback) => { context.runPreview = callback; },
+    clearTimeout: () => {},
+  });
+  const listeners = {};
+  const mobileListeners = {};
+  const row = {
+    dataset: { planId: "other/plan" },
+    isConnected: true,
+    getClientRects: () => [{}],
+    getBoundingClientRect: () => ({ bottom: 50 }),
+    querySelector: () => ({ textContent: "다른협력사", getBoundingClientRect: () => ({ left: 250 }) }),
+    addEventListener: (event, callback) => { listeners[event] = callback; },
+  };
+  const entry = {
+    dataset: { planId: "mobile-plan" },
+    addEventListener: (event, callback) => { mobileListeners[event] = callback; },
+  };
+  const content = {};
+  const preview = {
+    hidden: true, style: {}, offsetWidth: 320,
+    parentElement: { getBoundingClientRect: () => ({ top: 0, left: 0, width: 700 }) },
+    querySelector: (selector) => selector === "p" ? content : {},
+  };
+  const wrap = { querySelector: () => preview, querySelectorAll: (selector) => selector === "[data-plan-id]" ? [row, entry] : [row] };
+  const requests = [];
+  const navigations = [];
+  context.api = (path) => new Promise((resolve) => requests.push({ path, resolve }));
+  context.go = (...args) => navigations.push(args);
+  context.bindPlanListActions(wrap);
+
+  listeners.pointerenter({ pointerType: "touch" });
+  assert.equal(context.runPreview, undefined);
+  listeners.pointerenter({ pointerType: "mouse" });
+  const firstHover = context.runPreview();
+  assert.equal(requests[0].path, "/api/plans/other%2Fplan");
+  listeners.pointerleave();
+  listeners.pointerenter({ pointerType: "mouse" });
+  const secondHover = context.runPreview();
+  requests[1].resolve({ readOnly: true, plan: { workLocation: attack, writerName: "작성자" } });
+  await secondHover;
+  requests[0].resolve({ readOnly: true, plan: { workLocation: "이전 응답" } });
+  await firstHover;
+  assert.equal(content.textContent, `${attack}\n작성 작성자`);
+
+  listeners.click();
+  assert.equal(preview.hidden, true);
+  mobileListeners.click();
+  assert.deepEqual(navigations, [["detail", "other/plan"], ["detail", "mobile-plan"]]);
 });
 
 test("detail badges match list badges while rejected drafts remain editable and submittable", async () => {
