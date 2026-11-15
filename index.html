@@ -116,12 +116,15 @@
     .home-plan-table table { width: 100%; border-spacing: 0; table-layout: fixed; text-align: left; }
     .home-plan-table th, .home-plan-table td { padding: 9px 12px; overflow-wrap: anywhere; }
     .home-plan-table thead { color: var(--sub); font-size: 13px; }
-    .home-plan-table thead th:nth-child(1), .home-plan-table thead th:nth-child(2) { width: 124px; }
-    .home-plan-table thead th:nth-child(3), .home-plan-table thead th:nth-child(6) { width: 100px; }
-    .home-plan-table thead th:nth-child(5) { width: 184px; }
+    .home-plan-table thead th:nth-child(1) { width: 154px; }
+    .home-plan-table thead th:nth-child(2) { width: 124px; }
+    .home-plan-table thead th:nth-child(3), .home-plan-table thead th:nth-child(7) { width: 100px; }
+    .home-plan-table thead th:nth-child(6) { width: 184px; }
+    .home-plan-table .home-plan-date { white-space: nowrap; }
+    .home-plan-table .home-plan-content { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .home-plan-table tbody tr > * { border-top: 1px solid var(--line); }
     .home-plan-table tbody + tbody tr:first-child > * { border-top: 2px solid var(--border); }
-    .home-plan-table tbody th { background: var(--bg); vertical-align: top; }
+    .home-plan-table tbody th { background: var(--bg); vertical-align: middle; }
     .home-plan-table tbody:last-child th { border-bottom-left-radius: var(--radius); }
     .home-plan-table tr[data-plan-id] { cursor: pointer; }
     .home-plan-table tr:hover td, .home-plan-table tr:focus-within td { background: #f5f8fd; }
@@ -737,13 +740,14 @@ function planDateLabel(date) {
 }
 function planTableGroupHtml(date, plans) {
   return `<tbody>${plans.map((plan, index) => {
-    const dateHeader = index === 0 ? `<th scope="rowgroup" rowspan="${plans.length}">${esc(planDateLabel(date))}</th>` : "";
+    const dateHeader = index === 0 ? `<th class="home-plan-date" scope="rowgroup" rowspan="${plans.length}">${esc(planDateLabel(date))}</th>` : "";
     const manager = cleanName(plan.hyundaiManagerName) || (plan.status === "approved" ? plan.approverName : "") || "확인중";
     return `<tr data-plan-id="${esc(plan.id)}">
       ${dateHeader}
       <td>${esc(planListTime(plan))}</td>
       <td>${esc(plan.workType || "-")}</td>
       <td><button type="button" class="home-plan-company">${esc(plan.company || "-")}</button></td>
+      <td><span class="home-plan-content" data-content-id="${esc(plan.id)}" title="${esc(plan.workLocation || "")}">${esc(plan.workLocation || "…")}</span></td>
       <td>${esc(manager)}</td>
       <td>${planListBadgeHtml(plan)}</td>
     </tr>`;
@@ -758,6 +762,37 @@ function planCardHtml(date, plans) {
       ${planListBadgeHtml(plan)}
     </button>`).join("")}
   </section>`;
+}
+// 상세 API를 이용해 화면에 실제 표시되는 PC 행의 작업내용만 읽는다.
+function loadPlanListContents(wrap) {
+  const cells = wrap.querySelectorAll(".home-plan-content[data-content-id]");
+  if (!cells.length) return;
+  async function load(cell) {
+    try {
+      const { plan } = await api("/api/plans/" + encodeURIComponent(cell.dataset.contentId));
+      if (!cell.isConnected) return;
+      const content = String(plan.workLocation || "").trim().replace(/\s+/g, " ");
+      cell.textContent = content || "-";
+      cell.title = content;
+    } catch {
+      if (cell.isConnected) {
+        cell.textContent = "-";
+        cell.title = "";
+      }
+    }
+  }
+  if (!("IntersectionObserver" in window)) {
+    if (window.matchMedia("(min-width: 1024px)").matches) cells.forEach(load);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      observer.unobserve(entry.target);
+      load(entry.target);
+    });
+  });
+  cells.forEach((cell) => observer.observe(cell));
 }
 function bindPlanListActions(wrap) {
   const preview = wrap.querySelector(".home-plan-preview");
@@ -829,7 +864,7 @@ function renderPlanListSection() {
         <table aria-labelledby="homePlanListTitle">
           <thead><tr>
             <th scope="col">일자</th><th scope="col">시간</th><th scope="col">구분</th>
-            <th scope="col">업체</th><th scope="col">현대건설 상주관리자</th><th scope="col">상태</th>
+            <th scope="col">업체</th><th scope="col">작업내용</th><th scope="col">현대건설 상주관리자</th><th scope="col">상태</th>
           </tr></thead>
           ${shown.map(([date, plans]) => planTableGroupHtml(date, plans)).join("")}
         </table>
@@ -839,6 +874,7 @@ function renderPlanListSection() {
     </div>
     ${days.size > shown.length ? `<button type="button" class="block" id="showMorePlans">더보기 <span class="muted">(${shown.length}/${days.size}일)</span></button>` : ""}`;
   bindPlanListActions(wrap);
+  loadPlanListContents(wrap);
   wrap.querySelector("#showMorePlans")?.addEventListener("click", () => {
     state.planVisibleDays += PLAN_DAYS_PER_PAGE;
     renderPlanListSection();
