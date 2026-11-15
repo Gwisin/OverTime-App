@@ -127,8 +127,6 @@
     .home-plan-table tr[data-plan-id] { cursor: pointer; }
     .home-plan-table tr:hover td, .home-plan-table tr:focus-within td { background: #f5f8fd; }
     .home-plan-company { display: block; height: auto; padding: 0; border: 0; background: transparent; font: inherit; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
-    .home-plan-preview { position: absolute; z-index: 2; width: min(320px, 100%); padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(16, 24, 40, .15); pointer-events: none; }
-    .home-plan-preview p { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
   }
 
   /* 가입 승인 목록 */
@@ -227,7 +225,7 @@ const CONFIG = {
 /* =========================================================
    전역 상태
    ========================================================= */
-const PLAN_DAYS_PER_PAGE = 10;
+const PLAN_DAYS_PER_PAGE = 5;
 const state = {
   vendorTestMode: false, // Request-scoped role reduction; resets on reload/login/logout.
   idToken: null,
@@ -793,59 +791,11 @@ function loadPlanListContents(wrap) {
   cells.forEach((cell) => observer.observe(cell));
 }
 function bindPlanListActions(wrap) {
-  const preview = wrap.querySelector(".home-plan-preview");
-  const list = preview.parentElement;
-  let timer;
-  let activePreview;
-  function hidePreview() {
-    clearTimeout(timer);
-    activePreview = null;
-    preview.hidden = true;
-  }
-  async function showPreview(request) {
-    const { row } = request;
-    if (activePreview !== request || !row.isConnected || !row.getClientRects().length) return;
-    const rowBounds = row.getBoundingClientRect();
-    const listBounds = list.getBoundingClientRect();
-    const companyButton = row.querySelector(".home-plan-company");
-    const content = preview.querySelector("p");
-    preview.querySelector("strong").textContent = companyButton.textContent;
-    content.textContent = "작업 내용 불러오는 중…";
-    preview.style.top = `${rowBounds.bottom - listBounds.top + 4}px`;
-    preview.hidden = false;
-    const offset = companyButton.getBoundingClientRect().left - listBounds.left;
-    preview.style.left = `${Math.max(0, Math.min(offset, listBounds.width - preview.offsetWidth))}px`;
-    try {
-      const { plan } = await api("/api/plans/" + encodeURIComponent(row.dataset.planId));
-      if (activePreview !== request || !row.isConnected) return;
-      const work = String(plan.workLocation || "").trim();
-      content.textContent = [
-        work ? (work.length > 140 ? work.slice(0, 140) + "…" : work) : "등록된 작업 내용이 없습니다.",
-        plan.writerName ? `작성 ${plan.writerName}` : "",
-      ].filter(Boolean).join("\n");
-    } catch {
-      if (activePreview === request) content.textContent = "미리보기를 불러오지 못했습니다. 행을 클릭해 상세를 확인하세요.";
-    }
-  }
   wrap.querySelectorAll("[data-plan-id]").forEach((item) => {
     item.addEventListener("click", () => {
-      hidePreview();
       go("detail", item.dataset.planId);
     });
   });
-  wrap.querySelectorAll("tr[data-plan-id]").forEach((row) => {
-    row.addEventListener("pointerenter", (event) => {
-      if (event.pointerType !== "mouse") return;
-      hidePreview();
-      const request = { row };
-      activePreview = request;
-      timer = setTimeout(() => showPreview(request), 350);
-    });
-    row.addEventListener("pointerleave", hidePreview);
-  });
-  wrap.onkeydown = (event) => {
-    if (event.key === "Escape") hidePreview();
-  };
 }
 function renderPlanListSection() {
   const wrap = document.getElementById("planListWrap");
@@ -868,7 +818,6 @@ function renderPlanListSection() {
         </table>
       </div>
       <div class="home-plan-cards">${shown.map(([date, plans]) => planCardHtml(date, plans)).join("")}</div>
-      <div class="home-plan-preview" hidden aria-hidden="true"><strong></strong><p class="muted"></p></div>
     </div>
     ${days.size > shown.length ? `<button type="button" class="block" id="showMorePlans">더보기 <span class="muted">(${shown.length}/${days.size}일)</span></button>` : ""}`;
   bindPlanListActions(wrap);
@@ -2420,3 +2369,4 @@ bootAuth();
 </script>
 </body>
 </html>
+
