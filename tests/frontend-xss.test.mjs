@@ -33,13 +33,14 @@ test("home plan rows and cards escape data and avoid inline handlers", () => {
   const context = makeContext();
   const plan = {
     id: attack, workTimeStart: attack, workTimeEnd: attack, workType: attack,
-    status: attack, company: attack, hyundaiManagerName: attack,
+    status: attack, company: attack, hyundaiManagerName: attack, workLocation: `현장 / ${attack}`,
   };
   for (const render of [context.planCardHtml, context.planTableGroupHtml]) {
     const markup = render("2026-10-02", [plan]);
     assert.doesNotMatch(markup, /<img|onclick=/i);
     assert.match(markup, /&lt;img/);
   }
+  assert.match(context.planCardHtml("", [plan]), /home-plan-entry-work"[^>]*>&lt;img/);
   assert.equal(context.planStatusClass(attack), "");
 });
 
@@ -57,12 +58,12 @@ test("home groups whole work dates in both layouts and paginates by date", () =>
     id: `plan-${index + 1}`, company: "협력업체", workDate: `2026-10-${String(index + 1).padStart(2, "0")}`,
     status: "pending", workTimeStart: "06:00", workTimeEnd: "07:00",
   }));
-  plans.push({ ...plans[6], id: "same-day", workTimeStart: "18:00", workTimeEnd: "20:00" });
+  plans.push({ ...plans[6], id: "same-day", workTimeStart: "18:00", workTimeEnd: "20:00", workLocation: "현장외곽 /\n 휀스 설치" });
   context.testPlans = plans;
   vm.runInContext("state.homePlans = sortPlansForList(testPlans); renderPlanListSection()", context);
   assert.match(wrap.innerHTML, /rowspan="2">2026\.10\.07/);
   assert.equal((wrap.innerHTML.match(/data-plan-id="same-day"/g) || []).length, 2);
-  assert.match(wrap.innerHTML, /class="home-plan-entry" data-plan-id="same-day">\s*<span class="muted">18:00~20:00<\/span>\s*<span class="home-plan-entry-company">협력업체<\/span>\s*<span class="badge pending">검토중<\/span>/);
+  assert.match(wrap.innerHTML, /class="home-plan-entry" data-plan-id="same-day">\s*<span class="muted">18:00~20:00<\/span>\s*<span class="home-plan-entry-company">협력업체<\/span>\s*<span class="home-plan-entry-work" data-content-id="same-day">휀스 설치<\/span>\s*<span class="badge pending">검토중<\/span>/);
   assert.ok(wrap.innerHTML.indexOf('data-plan-id="same-day"') < wrap.innerHTML.indexOf('data-plan-id="plan-7"'));
   assert.doesNotMatch(wrap.innerHTML, /data-plan-id="plan-1"/);
   assert.match(wrap.innerHTML, /5\/11일/);
@@ -75,6 +76,49 @@ test("home groups whole work dates in both layouts and paginates by date", () =>
   wrap.showMore();
   assert.match(wrap.innerHTML, /data-plan-id="plan-1"/);
   assert.doesNotMatch(wrap.innerHTML, /id="showMorePlans"/);
+});
+
+test("mobile plan work keeps plain text and internal slashes", () => {
+  const context = makeContext();
+  assert.equal(context.mobilePlanWorkText(context.planListWorkText("  1/2 구역\n정리  ")), "1/2 구역 정리");
+  assert.equal(context.mobilePlanWorkText(context.planListWorkText("현장 ／ 1/2 구역 정리 / 폐기물 반출")), "1/2 구역 정리 / 폐기물 반출");
+  assert.equal(context.mobilePlanWorkText(context.planListWorkText(null)), "");
+});
+
+test("visible plan content uses one detail request per plan across layouts and rerenders", async () => {
+  const requests = [];
+  const context = makeContext();
+  context.api = async (path) => {
+    requests.push(path);
+    return { plan: { workLocation: "기부채납, 포디엄 /\n부상토 반출 4대" } };
+  };
+  const makeCell = (id, mobile, visible) => ({
+    dataset: { contentId: id },
+    classList: { contains: (name) => name === "home-plan-entry-work" && mobile },
+    isConnected: true,
+    getClientRects: () => visible ? [{}] : [],
+  });
+  const mobile = makeCell("legacy-plan", true, true);
+  const hiddenDesktop = makeCell("legacy-plan", false, false);
+  const hiddenNextDay = makeCell("next-plan", true, false);
+  const known = makeCell("known-plan", true, true);
+  const shown = [["2026-10-02", [{ id: "legacy-plan" }, { id: "next-plan" }, { id: "known-plan", workLocation: "장소 / h-pile 천공" }]]];
+  context.loadPlanListContents({ querySelectorAll: () => [mobile, hiddenDesktop, hiddenNextDay, known] }, shown);
+  await new Promise(setImmediate);
+  assert.deepEqual(requests, ["/api/plans/legacy-plan"]);
+  assert.equal(mobile.textContent, "부상토 반출 4대");
+  assert.equal(known.textContent, "h-pile 천공");
+  assert.equal(hiddenDesktop.textContent, undefined);
+  assert.equal(hiddenNextDay.textContent, undefined);
+
+  const desktop = makeCell("legacy-plan", false, true);
+  const mobileRerender = makeCell("legacy-plan", true, true);
+  context.loadPlanListContents({ querySelectorAll: () => [desktop, mobileRerender] }, shown);
+  await new Promise(setImmediate);
+  assert.deepEqual(requests, ["/api/plans/legacy-plan"]);
+  assert.equal(desktop.textContent, "기부채납, 포디엄 / 부상토 반출 4대");
+  assert.equal(desktop.title, desktop.textContent);
+  assert.equal(mobileRerender.textContent, mobile.textContent);
 });
 
 test("list badges distinguish rejected drafts without changing workflow status", () => {
