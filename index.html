@@ -104,9 +104,10 @@
   .home-plan-table { display: none; }
   .home-plan-day { margin-bottom: 10px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
   .home-plan-day h3 { margin: 0; padding: 8px 12px; color: var(--sub); font-size: 13px; }
-  .home-plan-entry { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 48px; padding: 6px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left; font-weight: 400; white-space: nowrap; }
+  .home-plan-entry { display: grid; grid-template-columns: auto minmax(0, min(7.5em, 28%)) minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; height: auto; min-height: 48px; padding: 6px 8px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left; font-weight: 400; white-space: nowrap; }
   .home-plan-entry:last-child { border-radius: 0 0 var(--radius) var(--radius); }
-  .home-plan-entry .home-plan-entry-company { overflow: hidden; text-overflow: ellipsis; }
+  .home-plan-entry-company, .home-plan-entry-work { overflow: hidden; text-overflow: ellipsis; }
+  .home-plan-entry-work { color: var(--sub); font-size: 12px; }
   @media (min-width: 1024px) {
     main.home-main { max-width: 1200px; }
     .home-plan-cards { display: none; }
@@ -734,6 +735,13 @@ function planListBadgeHtml(plan) {
 function planDateLabel(date) {
   return formatDateLabel(date) || "일자 미정";
 }
+function planListWorkText(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+function mobilePlanWorkText(content) {
+  const separator = content.search(/\s[/／]\s/);
+  return separator < 0 ? content : content.slice(separator + 3);
+}
 function planTableGroupHtml(date, plans) {
   return `<tbody>${plans.map((plan, index) => {
     const dateHeader = index === 0 ? `<th class="home-plan-date" scope="rowgroup" rowspan="${plans.length}">${esc(planDateLabel(date))}</th>` : "";
@@ -755,30 +763,50 @@ function planCardHtml(date, plans) {
     ${plans.map((plan) => `<button type="button" class="home-plan-entry" data-plan-id="${esc(plan.id)}">
       <span class="muted">${esc(planListTime(plan))}</span>
       <span class="home-plan-entry-company">${esc(plan.company || "-")}</span>
+      <span class="home-plan-entry-work" data-content-id="${esc(plan.id)}">${esc(mobilePlanWorkText(planListWorkText(plan.workLocation)))}</span>
       ${planListBadgeHtml(plan)}
     </button>`).join("")}
   </section>`;
 }
-// 상세 API를 이용해 화면에 실제 표시되는 PC 행의 작업내용만 읽는다.
-function loadPlanListContents(wrap) {
-  const cells = wrap.querySelectorAll(".home-plan-content[data-content-id]");
+const planListWorkRequests = new WeakMap();
+function getPlanListWork(plan) {
+  if (Object.hasOwn(plan, "workLocation")) return planListWorkText(plan.workLocation);
+  if (!planListWorkRequests.has(plan)) {
+    const request = api("/api/plans/" + encodeURIComponent(plan.id))
+      .then(({ plan: detail }) => planListWorkText(detail.workLocation))
+      .catch((error) => {
+        planListWorkRequests.delete(plan);
+        throw error;
+      });
+    planListWorkRequests.set(plan, request);
+  }
+  return planListWorkRequests.get(plan);
+}
+// 화면에 표시된 행만 상세 조회하고, 같은 목록의 더보기·화면 전환 때 결과를 재사용한다.
+function loadPlanListContents(wrap, shown) {
+  const cells = wrap.querySelectorAll("[data-content-id]");
   if (!cells.length) return;
+  const plansById = new Map(shown.flatMap(([, plans]) => plans.map((plan) => [String(plan.id), plan])));
   async function load(cell) {
+    const plan = plansById.get(cell.dataset.contentId);
+    if (!cell.isConnected || !plan) return;
+    const mobile = cell.classList.contains("home-plan-entry-work");
     try {
-      const { plan } = await api("/api/plans/" + encodeURIComponent(cell.dataset.contentId));
+      const content = await getPlanListWork(plan);
       if (!cell.isConnected) return;
-      const content = String(plan.workLocation || "").trim().replace(/\s+/g, " ");
-      cell.textContent = content || "-";
-      cell.title = content;
+      cell.textContent = mobile ? mobilePlanWorkText(content) : content || "-";
+      if (!mobile) cell.title = content;
     } catch {
-      if (cell.isConnected) {
+      if (cell.isConnected && !mobile) {
         cell.textContent = "-";
         cell.title = "";
       }
     }
   }
   if (!("IntersectionObserver" in window)) {
-    if (window.matchMedia("(min-width: 1024px)").matches) cells.forEach(load);
+    cells.forEach((cell) => {
+      if (cell.getClientRects().length) load(cell);
+    });
     return;
   }
   const observer = new IntersectionObserver((entries) => {
@@ -821,7 +849,7 @@ function renderPlanListSection() {
     </div>
     ${days.size > shown.length ? `<button type="button" class="block" id="showMorePlans">더보기 <span class="muted">(${shown.length}/${days.size}일)</span></button>` : ""}`;
   bindPlanListActions(wrap);
-  loadPlanListContents(wrap);
+  loadPlanListContents(wrap, shown);
   wrap.querySelector("#showMorePlans")?.addEventListener("click", () => {
     state.planVisibleDays += PLAN_DAYS_PER_PAGE;
     renderPlanListSection();
