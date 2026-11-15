@@ -57,15 +57,21 @@ test("home groups whole work dates in both layouts and paginates by date", () =>
     id: `plan-${index + 1}`, company: "협력업체", workDate: `2026-10-${String(index + 1).padStart(2, "0")}`,
     status: "pending", workTimeStart: "06:00", workTimeEnd: "07:00",
   }));
-  plans.push({ ...plans[1], id: "same-day", workTimeStart: "18:00", workTimeEnd: "20:00" });
+  plans.push({ ...plans[6], id: "same-day", workTimeStart: "18:00", workTimeEnd: "20:00" });
   context.testPlans = plans;
   vm.runInContext("state.homePlans = sortPlansForList(testPlans); renderPlanListSection()", context);
-  assert.match(wrap.innerHTML, /rowspan="2">2026\.10\.02/);
+  assert.match(wrap.innerHTML, /rowspan="2">2026\.10\.07/);
   assert.equal((wrap.innerHTML.match(/data-plan-id="same-day"/g) || []).length, 2);
   assert.match(wrap.innerHTML, /class="home-plan-entry" data-plan-id="same-day">\s*<span class="muted">18:00~20:00<\/span>\s*<span class="home-plan-entry-company">협력업체<\/span>\s*<span class="badge pending">검토중<\/span>/);
-  assert.ok(wrap.innerHTML.indexOf('data-plan-id="same-day"') < wrap.innerHTML.indexOf('data-plan-id="plan-2"'));
+  assert.ok(wrap.innerHTML.indexOf('data-plan-id="same-day"') < wrap.innerHTML.indexOf('data-plan-id="plan-7"'));
   assert.doesNotMatch(wrap.innerHTML, /data-plan-id="plan-1"/);
+  assert.match(wrap.innerHTML, /5\/11일/);
+  assert.match(wrap.innerHTML, /data-plan-id="plan-11"/);
+  assert.doesNotMatch(wrap.innerHTML, /data-plan-id="plan-6"/);
+  wrap.showMore();
   assert.match(wrap.innerHTML, /10\/11일/);
+  assert.match(wrap.innerHTML, /data-plan-id="plan-2"/);
+  assert.doesNotMatch(wrap.innerHTML, /data-plan-id="plan-1"/);
   wrap.showMore();
   assert.match(wrap.innerHTML, /data-plan-id="plan-1"/);
   assert.doesNotMatch(wrap.innerHTML, /id="showMorePlans"/);
@@ -82,56 +88,25 @@ test("list badges distinguish rejected drafts without changing workflow status",
   }
 });
 
-test("desktop hover previews the authorized details and list entries open the existing detail route", async () => {
-  const context = makeContext(undefined, {
-    setTimeout: (callback) => { context.runPreview = callback; },
-    clearTimeout: () => {},
-  });
-  const listeners = {};
-  const mobileListeners = {};
-  const row = {
-    dataset: { planId: "other/plan" },
-    isConnected: true,
-    getClientRects: () => [{}],
-    getBoundingClientRect: () => ({ bottom: 50 }),
-    querySelector: () => ({ textContent: "다른협력사", getBoundingClientRect: () => ({ left: 250 }) }),
-    addEventListener: (event, callback) => { listeners[event] = callback; },
-  };
-  const entry = {
-    dataset: { planId: "mobile-plan" },
-    addEventListener: (event, callback) => { mobileListeners[event] = callback; },
-  };
-  const content = {};
-  const preview = {
-    hidden: true, style: {}, offsetWidth: 320,
-    parentElement: { getBoundingClientRect: () => ({ top: 0, left: 0, width: 700 }) },
-    querySelector: (selector) => selector === "p" ? content : {},
-  };
-  const wrap = { querySelector: () => preview, querySelectorAll: (selector) => selector === "[data-plan-id]" ? [row, entry] : [row] };
-  const requests = [];
+test("list entries open detail without registering hover previews or fetching details", () => {
+  const context = makeContext();
   const navigations = [];
-  context.api = (path) => new Promise((resolve) => requests.push({ path, resolve }));
+  let requests = 0;
+  context.api = () => { requests++; };
   context.go = (...args) => navigations.push(args);
-  context.bindPlanListActions(wrap);
-
-  listeners.pointerenter({ pointerType: "touch" });
-  assert.equal(context.runPreview, undefined);
-  listeners.pointerenter({ pointerType: "mouse" });
-  const firstHover = context.runPreview();
-  assert.equal(requests[0].path, "/api/plans/other%2Fplan");
-  listeners.pointerleave();
-  listeners.pointerenter({ pointerType: "mouse" });
-  const secondHover = context.runPreview();
-  requests[1].resolve({ readOnly: true, plan: { workLocation: attack, writerName: "작성자" } });
-  await secondHover;
-  requests[0].resolve({ readOnly: true, plan: { workLocation: "이전 응답" } });
-  await firstHover;
-  assert.equal(content.textContent, `${attack}\n작성 작성자`);
-
-  listeners.click();
-  assert.equal(preview.hidden, true);
-  mobileListeners.click();
-  assert.deepEqual(navigations, [["detail", "other/plan"], ["detail", "mobile-plan"]]);
+  const listeners = [{}, {}];
+  const entries = ["desktop-plan", "mobile-plan"].map((id, index) => ({
+    dataset: { planId: id },
+    addEventListener: (event, callback) => { listeners[index][event] = callback; },
+  }));
+  context.bindPlanListActions({ querySelectorAll: () => entries });
+  for (const events of listeners) {
+    assert.deepEqual(Object.keys(events), ["click"]);
+    events.click();
+  }
+  assert.equal(requests, 0);
+  assert.deepEqual(navigations, [["detail", "desktop-plan"], ["detail", "mobile-plan"]]);
+  assert.doesNotMatch(html, /home-plan-preview/);
 });
 
 test("detail badges match list badges while rejected drafts remain editable and submittable", async () => {
@@ -793,3 +768,4 @@ test("safety-first approval keeps the execution button available after ADMIN res
   assert.doesNotMatch(container.innerHTML, /id="detailSafetyApproveButton"/);
   assert.match(container.innerHTML, /badge pending">검토중/);
 });
+
