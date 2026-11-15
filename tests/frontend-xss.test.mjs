@@ -46,6 +46,7 @@ test("home plan rows and cards escape data and avoid inline handlers", () => {
 test("home groups whole work dates in both layouts and paginates by date", () => {
   const wrap = {
     innerHTML: "",
+    querySelectorAll: () => [],
     querySelector: (selector) => selector === "#showMorePlans" && wrap.innerHTML.includes('id="showMorePlans"')
       ? { addEventListener: (_event, callback) => { wrap.showMore = callback; } }
       : null,
@@ -61,6 +62,7 @@ test("home groups whole work dates in both layouts and paginates by date", () =>
   vm.runInContext("state.homePlans = sortPlansForList(testPlans); renderPlanListSection()", context);
   assert.match(wrap.innerHTML, /rowspan="2">2026\.10\.02/);
   assert.equal((wrap.innerHTML.match(/data-plan-id="same-day"/g) || []).length, 2);
+  assert.match(wrap.innerHTML, /class="home-plan-entry" data-plan-id="same-day">\s*<span class="muted">18:00~20:00<\/span>\s*<span class="home-plan-entry-company">협력업체<\/span>\s*<span class="badge pending">검토중<\/span>/);
   assert.ok(wrap.innerHTML.indexOf('data-plan-id="same-day"') < wrap.innerHTML.indexOf('data-plan-id="plan-2"'));
   assert.doesNotMatch(wrap.innerHTML, /data-plan-id="plan-1"/);
   assert.match(wrap.innerHTML, /10\/11일/);
