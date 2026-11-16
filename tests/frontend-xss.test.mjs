@@ -675,6 +675,38 @@ for (const editing of [false, true]) test(`${editing ? "edit" : "new"} vendor fo
   assert.equal(calls.length, editing ? 2 : 1);
 });
 
+test("PDF approval cells use Seoul time and keep missing times blank", async () => {
+  const cells = [];
+  const context = makeContext(undefined, { window: { addEventListener() {}, jspdf: {
+    jsPDF: class {
+      addFileToVFS() {}
+      addFont() {}
+      setProperties() {}
+    },
+  } } });
+  context.loadPdfFonts = async () => ["", ""];
+  context.loadExportLibrary = async () => {};
+  context.drawPdfCell = (_pdf, value, x, _y, _width, height) => {
+    if (x === 152.5 && height === 13) cells.push(value);
+  };
+  const plan = {
+    status: "approved",
+    submittedAt: "2026-11-16T07:30:00.000Z",
+    executionReview: { reviewedAt: "2026-11-16T15:00:00.000Z" },
+    safetyApproval: { approvedAt: "2026-11-16T16:30:00.000Z" },
+  };
+  await context.createPlanPdf(plan);
+  const expectedTimes = ["2026.11.16, 16:30", "2026.11.17, 00:00", "2026.11.17, 01:30"];
+  assert.deepEqual(cells.splice(0), expectedTimes);
+  const printable = context.printablePlanDocument(plan);
+  for (const time of expectedTimes) assert.ok(printable.includes(`<div class="pdf-fit">${time}</div>`));
+
+  await context.createPlanPdf({ status: "approved", approval: { approvedAt: plan.safetyApproval.approvedAt } });
+  assert.deepEqual(cells.splice(0), ["", "", expectedTimes[2]]);
+  await context.createPlanPdf({ status: "approved", approval: { approvedAt: "2026-11-16" } });
+  assert.deepEqual(cells, ["", "", "2026.11.16"]);
+});
+
 test("PDF libraries load on demand, share loads, and recover from errors", async () => {
   assert.doesNotMatch(html, /<script src="https:\/\/cdnjs[^\"]*(?:jspdf|jszip)/);
   const scripts = [];
