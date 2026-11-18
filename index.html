@@ -516,6 +516,7 @@ async function onGoogleCredential(response) {
     saveSession(data);
     state.authStatus = data.status;
     if (data.status === "approved") {
+      resetPlanListView();
       state.user = data.user;
       state.pendingSignupCount = null;
       go("home");
@@ -538,6 +539,7 @@ function logout() {
   state.sessionExpiresAt = null;
   state.idToken = null;
   state.user = null;
+  resetPlanListView();
   state.pendingSignupCount = null;
   signupCountRequest++;
   state.authStatus = null;
@@ -680,6 +682,11 @@ function renderHome() {
   div.innerHTML = `<div class="muted center">불러오는 중...</div>`;
   loadHome(div);
   return div;
+}
+
+function resetPlanListView() {
+  state.planViewFilter = "";
+  state.planVisibleDays = PLAN_DAYS_PER_PAGE;
 }
 
 // 홈 목록 조회 범위: "" = 역할별 기본값(협력업체는 내 업체, 현대건설/ADMIN은 전체), "__all__" = 전체, 그 외 = 특정 업체명
@@ -1385,7 +1392,7 @@ async function switchVendorTestMode(enabled) {
     }
     state.user = data.user;
     state.pendingSignupCount = null;
-    state.planViewFilter = "";
+    resetPlanListView();
     state.homePlans = [];
     state.currentPlan = null;
     go("home", undefined, { replace: true });
@@ -2381,6 +2388,11 @@ async function bootAuth() {
     state.authStatus = data.status;
     state.pendingRegisterInfo = { email: data.email, name: data.name };
     if (data.status === "approved") {
+      const previousUser = state.user;
+      if (!previousUser || previousUser.email !== data.user.email || previousUser.org !== data.user.org ||
+          previousUser.company !== data.user.company || previousUser.isAdmin !== data.user.isAdmin) {
+        resetPlanListView();
+      }
       state.user = data.user;
       state.pendingSignupCount = null;
       go("home");
