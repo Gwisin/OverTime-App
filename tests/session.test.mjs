@@ -74,6 +74,37 @@ test("logout propagates to another tab and never silently signs back in", () => 
   assert.equal(b.timers.size, 0);
 });
 
+test("a vendor login starts at its own company even after another scope was selected", async () => {
+  const b = browser();
+  const user = { org: "vendor", company: "한빛건설", email: "vendor@example.com", isAdmin: false };
+  b.context.api = async () => ({ ...data, status: "approved", user });
+  vm.runInContext('state.planViewFilter = "__all__"; state.planVisibleDays = 10;', b.context);
+  b.context.logout();
+  assert.equal(b.context.planListQueryString(), "");
+  vm.runInContext('state.planViewFilter = "다른 업체"; state.planVisibleDays = 15;', b.context);
+  await b.context.onGoogleCredential({ credential: "google-token" });
+  assert.equal(b.context.planListQueryString(), "");
+  assert.equal(vm.runInContext("state.planVisibleDays", b.context), 5);
+  assert.match(b.context.planViewFilterOptionsHtml([user.company]), /<option value="" selected>당사<\/option>/);
+});
+
+test("restoring another account resets the list scope while restoring the same account keeps it", async () => {
+  const b = browser();
+  b.context.saveSession(data);
+  let user = { org: "hyundai", company: "현대건설(주)", email: "hyundai@example.com", isAdmin: false };
+  b.context.api = async () => ({ status: "approved", user });
+  await b.context.bootAuth();
+  vm.runInContext('state.planViewFilter = "한빛건설"; state.planVisibleDays = 10;', b.context);
+  await b.context.bootAuth();
+  assert.equal(b.context.planListQueryString(), "?company=" + encodeURIComponent("한빛건설"));
+  assert.equal(vm.runInContext("state.planVisibleDays", b.context), 10);
+  user = { org: "vendor", company: "대성산업", email: "vendor@example.com", isAdmin: false };
+  await b.context.bootAuth();
+  assert.equal(b.context.planListQueryString(), "");
+  assert.equal(vm.runInContext("state.planVisibleDays", b.context), 5);
+  assert.match(b.context.planViewFilterOptionsHtml([user.company]), /<option value="" selected>당사<\/option>/);
+});
+
 test("a request completing after midnight cannot return protected data after timer logout", async () => {
   const b = browser(); b.context.saveSession(data);
   let finish;
