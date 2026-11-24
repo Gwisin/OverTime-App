@@ -185,15 +185,21 @@
   .card.center { max-width: 420px; margin: 24px auto; }
 
   /* 로그인 화면 (로그인 route에서만 body.is-login 이 붙음) */
+  @font-face {
+    font-family: "Login Noto Sans KR";
+    src: url("./assets/fonts/noto-sans-kr-login.woff2") format("woff2");
+    font-weight: 400 700;
+    font-display: swap;
+  }
   body.is-login { background-color: #f4f7fb; background-image: radial-gradient(900px 520px at 12% 8%, rgba(27, 100, 218, 0.09), transparent 62%), radial-gradient(800px 480px at 92% 92%, rgba(27, 100, 218, 0.07), transparent 62%), linear-gradient(180deg, #f8fafd 0%, #eef3fa 100%); background-attachment: fixed; }
   body.is-login #app { min-height: 0; padding-bottom: 0; }
   body.is-login main { max-width: none; padding: 0; }
-  .login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh; padding: 24px 0; }
+  .login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh; padding: 24px 0; font-family: "Login Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   .login-card { width: calc(100% - 32px); max-width: 420px; padding: 40px 40px 36px; background: var(--card); border-radius: 20px; box-shadow: 0 12px 40px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.05); }
   .login-icon { display: block; width: 92px; height: 92px; margin: 0 auto 20px; object-fit: contain; }
   .login-title { margin: 0 0 28px; font-size: 28px; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em; color: var(--text); text-align: center; }
   #gsi-button-container { display: flex; justify-content: center; width: 100%; min-height: 44px; }
-  .login-help { margin: 14px 0 0; font-size: 14px; line-height: 1.5; color: var(--muted); text-align: center; }
+  .login-help { margin: 14px 0 0; font-size: 14px; line-height: 1.5; color: var(--muted); text-align: center; word-break: keep-all; }
   @media (max-width: 480px) {
     .login-card { padding: 30px 20px 32px; }
     .login-icon { width: 80px; height: 80px; margin-bottom: 16px; }
